@@ -182,9 +182,32 @@ def recompute_locally(codes=None, progress_cb=None):
         # 预拉所有 K 线(避免重复网络 I/O)
         kline_cache = {}
         for i, code in enumerate(codes):
-            kw = algo.fetch_kline(code, min_len=275)
-            if kw is not None and len(kw) >= 250:
+            kw = algo.fetch_kline(code, min_len=250)
+            # 如果新浪失败且数据 < 250 天,用腾讯源降级
+            if kw is None or len(kw) < 100:
+                try:
+                    r2 = requests.get(
+                        'http://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
+                        params={'param': f"{'sh' if code.startswith('5') or code.startswith('1') else 'sz'}{code},day,,,640,qfq"},
+                        timeout=10,
+                    )
+                    if r2.status_code == 200:
+                        d2 = r2.json().get('data',{})
+                        txkey = ('sh' if code.startswith('5') or code.startswith('1') else 'sz') + code
+                        kl2 = d2.get(txkey,{}).get('qfqday') or d2.get(txkey,{}).get('day')
+                        if kl2 and len(kl2) >= 100:
+                            kw = pd.DataFrame(kl2, columns=['date','open','close','high','low','volume'])
+                            kw[['open','close','high','low','volume']] = kw[['open','close','high','low','volume']].astype(float)
+                except Exception:
+                    pass
+            if kw is not None and len(kw) >= 100:
                 kw = kw.dropna(subset=["close"]).reset_index(drop=True)
+                # 新 ETF(<250 天):前向 pad 到 250
+                if len(kw) < 250:
+                    pad_needed = 250 - len(kw)
+                    first_row = kw.iloc[:1].copy()
+                    pads = pd.concat([first_row] * pad_needed, ignore_index=True)
+                    kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
                 kline_cache[code] = kw
             if progress_cb:
                 progress_cb(i + 1, total, code, None, "kline")
