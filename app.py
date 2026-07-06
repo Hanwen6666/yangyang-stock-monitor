@@ -482,101 +482,6 @@ PLOTLY_THEME = go.layout.Template({
     }
 })
 
-def render_pie(df: pd.DataFrame):
-    counts = df["strength_label"].value_counts().reindex(LABEL_ORDER, fill_value=0).reset_index()
-    counts.columns = ["趋势", "数量"]
-    counts = counts[counts["数量"] > 0]
-
-    fig = go.Figure()
-    fig.add_trace(go.Pie(
-        labels=counts["趋势"],
-        values=counts["数量"],
-        hole=0.55,
-        marker=dict(colors=[LABEL_COLORS[l][0] for l in counts["趋势"]],
-                    line=dict(color=BG_PANEL, width=2)),
-        textinfo="label+percent",
-        textposition="outside",
-        textfont=dict(size=12, color=TEXT),
-        hovertemplate="<b>%{label}</b><br>数量:%{value}<br>占比:%{percent}<extra></extra>",
-    ))
-    fig.update_layout(
-        template=PLOTLY_THEME,
-        showlegend=False,
-        height=380,
-        margin=dict(t=20, r=20, b=20, l=20),
-        annotations=[dict(text=f'<b style="font-size:24px">{len(df)}</b><br>'
-                            f'<span style="font-size:11px;color:{TEXT_MUTED}">只 ETF</span>',
-                          x=0.5, y=0.5, font_size=24, showarrow=False)],
-    )
-    return fig
-
-def render_bar(df: pd.DataFrame):
-    grouped = df.groupby("category").agg(
-        total=("code", "count"),
-        strong=("strength_label", lambda s: s.isin(["超强势", "强势"]).sum()),
-    ).reset_index()
-    grouped["strong_pct"] = grouped["strong"] / grouped["total"] * 100
-    grouped = grouped.sort_values("total", ascending=False).head(12)
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="强势+超强势", x=grouped["category"], y=grouped["strong"],
-        marker=dict(color=LABEL_COLORS["强势"][0],
-                    line=dict(color=LABEL_COLORS["强势"][0], width=0)),
-        text=grouped["strong"], textposition="inside", textfont=dict(color="#fff", size=11),
-        hovertemplate="<b>%{x}</b><br>强势数:%{y}<extra></extra>",
-    ))
-    fig.add_trace(go.Bar(
-        name="全部", x=grouped["category"], y=grouped["total"],
-        marker=dict(color="rgba(79,140,255,0.35)", line=dict(width=0)),
-        text=grouped["total"], textposition="inside", textfont=dict(color=TEXT, size=11),
-        hovertemplate="<b>%{x}</b><br>总数:%{y}<extra></extra>",
-    ))
-    fig.update_layout(
-        template=PLOTLY_THEME,
-        barmode="overlay",
-        height=380,
-        xaxis_tickangle=-30,
-        legend=dict(orientation="h", y=-0.25, x=0.5, xanchor="center",
-                    font=dict(size=12, color=TEXT_MUTED),
-                    bgcolor="rgba(0,0,0,0)"),
-    )
-    return fig
-
-def render_scatter(df: pd.DataFrame):
-    d = df[df["fund_size_yi"] > 0].copy()
-    d["log_size"] = np.log10(d["fund_size_yi"] + 1)
-    fig = go.Figure()
-    for label in LABEL_ORDER:
-        sub = d[d["strength_label"] == label]
-        if sub.empty: continue
-        bg, fg = LABEL_COLORS[label]
-        fig.add_trace(go.Scatter(
-            x=sub["slope_50"], y=sub["log_size"],
-            mode="markers", name=label,
-            marker=dict(color=bg, size=10, opacity=0.75,
-                        line=dict(color=fg, width=0)),
-            text=sub["name"], customdata=sub[["code", "fund_size_yi"]].values,
-            hovertemplate=("<b>%{text}</b><br>"
-                           "代码:%{customdata[0]}<br>"
-                           "50日斜率:%{x:.2f}<br>"
-                           "规模:%{customdata[1]:.1f} 亿<extra></extra>"),
-        ))
-    fig.update_layout(
-        template=PLOTLY_THEME,
-        height=420,
-        xaxis=dict(title="50日斜率", gridcolor=BORDER),
-        yaxis=dict(title="规模 log10(亿)",
-                   tickvals=[0, 1, 2, 3], ticktext=["1亿", "10亿", "100亿", "1000亿"],
-                   gridcolor=BORDER),
-        legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center",
-                    font=dict(size=11, color=TEXT_MUTED),
-                    bgcolor="rgba(0,0,0,0)"),
-        margin=dict(t=20, r=20, b=60, l=60),
-    )
-    return fig
-
-# ============================================================
 # 趋势演变(热力图)
 # ============================================================
 def render_history_heatmap(df_hist: pd.DataFrame, df_res: pd.DataFrame, f: dict):
@@ -701,9 +606,8 @@ def main():
     st.markdown(f'<div style="height:16px"></div>', unsafe_allow_html=True)
 
     # === Tab 1: 列表 ===
-    # === Tab 2: 图表 ===
-    # === Tab 3: 趋势演变 ===
-    tab1, tab2, tab3 = st.tabs(["📋 详细列表", "📊 图表分析", "🔥 趋势演变"])
+    # === Tab 2: 趋势演变 ===
+    tab1, tab2 = st.tabs(["📋 详细列表", "🔥 趋势演变"])
 
     with tab1:
         c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
@@ -730,21 +634,6 @@ def main():
         render_table(df_view)
 
     with tab2:
-        c1, c2 = st.columns(2, gap="medium")
-        with c1:
-            st.markdown(f'<p style="color:{TEXT_MUTED};font-size:13px;margin:0 0 8px 0">'
-                        f'📊 趋势分布</p>', unsafe_allow_html=True)
-            st.plotly_chart(render_pie(df_res), use_container_width=True)
-        with c2:
-            st.markdown(f'<p style="color:{TEXT_MUTED};font-size:13px;margin:0 0 8px 0">'
-                        f'📊 行业强度(Top 12)</p>', unsafe_allow_html=True)
-            st.plotly_chart(render_bar(df_res), use_container_width=True)
-        st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
-        st.markdown(f'<p style="color:{TEXT_MUTED};font-size:13px;margin:0 0 8px 0">'
-                    f'📊 50日斜率 vs 规模(散点图,按趋势分组)</p>', unsafe_allow_html=True)
-        st.plotly_chart(render_scatter(df_res), use_container_width=True)
-
-    with tab3:
         st.markdown(f'<p style="color:{TEXT_MUTED};font-size:13px;margin:0 0 8px 0">'
                     f'🔥 近 {len(load_points())} 天趋势演变(色块化热力图)</p>',
                     unsafe_allow_html=True)
