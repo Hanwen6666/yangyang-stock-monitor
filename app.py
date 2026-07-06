@@ -15,6 +15,7 @@ import pandas as pd
 from pathlib import Path
 import sys
 import datetime
+import time
 
 # 把当前目录加进 path,这样 tabs/ 能 import
 sys.path.insert(0, str(Path(__file__).parent))
@@ -212,77 +213,92 @@ def main():
     # 渲染 header
     render_header(df_res, st.session_state.refresh_state)
 
-    # 刷新按钮行 — 2 个按钮: 快速刷新(API) + 重新计算(v27 本地)
-    btn_col, btn_col2, info_col = st.columns([1, 1, 7])
+    # 单按钮:点一下 → 拉数据 + v27 本地重算 + 进度条
+    btn_col, info_col = st.columns([1, 9])
     with btn_col:
-        clicked_api = st.button(
-            "🔄 快速刷新",
-            help="从 CloudBase API 拉取最新数据(秒级)",
+        clicked = st.button(
+            "🔄 数据刷新",
+            help="拉取最新数据 + v27 本地重算指标(约 2 分钟)",
             use_container_width=True,
-        )
-    with btn_col2:
-        clicked_local = st.button(
-            "🧮 重新计算",
-            help="用 v27 算法本地重算所有指标(5-10 分钟,需联网拉 K 线)",
-            use_container_width=True,
+            type="primary",
         )
     with info_col:
         rs = st.session_state.refresh_state
-        if clicked_api:
-            with st.spinner("正在拉取数据..."):
-                res = refresh_data()
-            if res["ok"]:
-                st.session_state.refresh_state = res
+        if clicked:
+            # === Step 1: 拉 API 数据 ===
+            progress = st.progress(0, text="拉取趋势历史数据...")
+            t_start = time.time()
+            api_res = refresh_data()
+            if not api_res["ok"]:
+                progress.empty()
+                st.error(f"拉取数据失败: {api_res['error']}")
+            else:
+                progress.progress(15, text=f"趋势数据已拉取 ({api_res['elapsed_ms']}ms)")
+                # === Step 2: v27 本地重算 ===
+                total_etfs = api_res["n_etfs"]
+                log_box = st.empty()
+
+                def on_progress(i, total, code, metrics, status):
+                    pct = 15 + int((i / total) * 80)  # 15% → 95%
+                    msg = f"重算中 {i}/{total} · {code} · {status}"
+                    progress.progress(min(pct, 99) / 100, text=msg)
+                    if i % 10 == 0 or i == total:
+                        log_box.markdown(
+                            f'<div style="color:{TEXT_DIM};font-size:11px;'
+                            f'font-family:monospace;">' + msg + '</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                local_res = recompute_locally(progress_cb=on_progress)
+
+                # === Step 3: 完成 ===
+                progress.progress(100, text="完成")
+                time.sleep(0.3)
+                progress.empty()
+
+                # 决定用哪份数据
+                if local_res["ok"]:
+                    # 优先用本地算的(更新更准,基于当前时间点)
+                    final = local_res
+                    st.session_state.refresh_state = {**local_res, "mode": "local"}
+                else:
+                    # 本地失败 → 回退到 API
+                    final = api_res
+                    st.session_state.refresh_state = {**api_res, "mode": "api-fallback",
+                                                    "local_error": local_res["error"]}
+
                 load_results.clear()
                 load_history.clear()
-                st.toast(
-                    f"✅ 快速刷新 · {res['n_etfs']} 只 ETF · {res['elapsed_ms']}ms",
-                    icon="🎉",
+
+                # 顶部结果报告
+                st.markdown(
+                    f'<div style="background:{BG_PANEL};border:1px solid '
+                    f'{ACCENT_DN if final["ok"] else "#ff4d4f"};border-radius:8px;'
+                    f'padding:14px 18px;margin-top:8px;">'
+                    f'<div style="color:{ACCENT_DN if final["ok"] else "#ff4d4f"};'
+                    f'font-size:13px;font-weight:600;margin-bottom:4px;">'
+                    f'{"✅ 刷新完成" if final["ok"] else "❌ 刷新失败"}'
+                    f'</div>'
+                    f'<div style="color:{TEXT};font-size:12px;line-height:1.7;'
+                    f'font-family:monospace;">'
+                    f'· 数据日期: <b>{final.get("asof_date", "—")}</b><br>'
+                    f'· 标的池: <b>{final["n_etfs"]}</b> 只 ETF<br>'
+                    f'· 趋势历史: <b>{final["n_points"]}</b> 天<br>'
+                    f'· 总耗时: <b>{int((time.time()-t_start)*1000)}</b>ms'
+                    f'{f"<br>· ⚠️ 本地重算失败,已回退到 API 数据" if final.get("mode") == "api-fallback" else ""}'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
                 st.rerun()
-            else:
-                st.error(f"刷新失败: {res['error']}")
-        elif clicked_local:
-            # 显示进度
-            progress_placeholder = st.empty()
-            log_placeholder = st.empty()
-            n_done = [0]
-            n_total = [0]
-            failed = []
-
-            def on_progress(i, total, code, metrics, status):
-                n_done[0] = i
-                n_total[0] = total
-                if status != "ok":
-                    failed.append((code, status))
-                progress_placeholder.progress(
-                    min(i / total, 1.0),
-                    text=f"🧮 重算中: {i}/{total} · {code} · {status}"
-                )
-
-            with st.spinner("v27 本地重算中(5-10 分钟)..."):
-                res = recompute_locally(progress_cb=on_progress)
-            progress_placeholder.empty()
-
-            if res["ok"]:
-                st.session_state.refresh_state = res
-                load_results.clear()
-                load_history.clear()
-                st.toast(
-                    f"✅ 重新计算完成 · {res['n_etfs']} 只 ETF · {res['elapsed_ms']}ms",
-                    icon="🎉",
-                )
-                st.rerun()
-            else:
-                st.error(f"重算失败: {res['error']}")
         elif rs:
             # 显示上次刷新状态
             fa = rs["fetched_at"].split("T")[1].split(".")[0] if "T" in rs["fetched_at"] else rs["fetched_at"]
-            mode_badge = "⚡API" if rs.get("mode") == "api" else "🧮本地"
+            mode_label = "本地重算" if rs.get("mode") == "local" else "API"
             st.markdown(
                 f'<div style="color:{TEXT_DIM};font-size:11px;padding-top:8px;'
                 f'font-family:monospace;">'
-                f'上次刷新: {fa} [{mode_badge}] · {rs["n_etfs"]} 只 ETF'
+                f'上次刷新: {fa} ({mode_label}) · {rs["n_etfs"]} 只 ETF'
                 f' · {rs["elapsed_ms"]}ms'
                 f'</div>',
                 unsafe_allow_html=True,
