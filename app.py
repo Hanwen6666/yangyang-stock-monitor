@@ -149,45 +149,43 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
     n = len(df)
 
     # 上次刷新时间显示
-    last_fetch_text = ""
+    last_fetch_html = ""
     if refresh_state and refresh_state.get("fetched_at"):
         fa = refresh_state["fetched_at"]
-        # ISO 格式 → HH:MM:SS
         try:
             t = fa.split("T")[1].split(".")[0] if "T" in fa else fa.split(" ")[1]
-            last_fetch_text = t
+            last_fetch_html = (
+                f'<span style="color:{BORDER_HI};">|</span>'
+                f'<span style="color:{TEXT_DIM};font-size:11px;">刷新</span>'
+                f'<span style="color:{TEXT_MUTED};font-size:12px;font-family:monospace;">{t}</span>'
+            )
         except Exception:
-            last_fetch_text = fa
+            last_fetch_html = f'<span style="color:{TEXT_DIM};font-size:11px;">刷新 {fa}</span>'
 
-    st.markdown(f"""
-    <div style="display:flex;align-items:center;gap:16px;margin-bottom:4px;
-                padding-bottom:14px;border-bottom:1px solid {BORDER};">
-      <div style="display:flex;align-items:baseline;gap:10px;">
-        <h1 style="margin:0;font-size:24px;font-weight:700;color:{TEXT};
-                   letter-spacing:-0.5px;">
-          羊羊股市监测
-        </h1>
-        <span style="color:{TEXT_DIM};font-size:12px;font-weight:400;
-                     letter-spacing:0.5px;margin-left:4px;">
-          A 股 ETF · 趋势分析
-        </span>
-      </div>
-      <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-        <div style="display:flex;align-items:center;gap:8px;
-                    background:{BG_PANEL};border:1px solid {BORDER};
-                    border-radius:6px;padding:5px 12px;">
-          <span style="color:{TEXT_DIM};font-size:11px;">数据日期</span>
-          <span style="color:{TEXT};font-size:12px;font-weight:600;
-                       font-family:monospace;">{asof_str}</span>
-          <span style="color:{BORDER_HI};">|</span>
-          <span style="color:{TEXT_DIM};font-size:11px;">标的池</span>
-          <span style="color:{ACCENT_UP};font-size:12px;font-weight:600;
-                       font-family:monospace;">{n}</span>
-          {f'<span style="color:{BORDER_HI};">|</span><span style="color:{TEXT_DIM};font-size:11px;">刷新</span><span style="color:{TEXT_MUTED};font-size:12px;font-family:monospace;">{last_fetch_text}</span>' if last_fetch_text else ''}
-        </div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    header_html = (
+        '<div style="display:flex;align-items:center;gap:16px;margin-bottom:4px;'
+        f'padding-bottom:14px;border-bottom:1px solid {BORDER};">'
+      '<div style="display:flex;align-items:baseline;gap:10px;">'
+        '<h1 style="margin:0;font-size:24px;font-weight:700;'
+             f'color:{TEXT};letter-spacing:-0.5px;">羊羊股市监测</h1>'
+        '<span style="color:{TEXT_DIM};font-size:12px;font-weight:400;'
+              'letter-spacing:0.5px;margin-left:4px;">A 股 ETF · 趋势分析</span>'
+      '</div>'
+      '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">'
+        '<div style="display:flex;align-items:center;gap:8px;'
+             f'background:{BG_PANEL};border:1px solid {BORDER};'
+             'border-radius:6px;padding:5px 12px;">'
+          f'<span style="color:{TEXT_DIM};font-size:11px;">数据日期</span>'
+          f'<span style="color:{TEXT};font-size:12px;font-weight:600;font-family:monospace;">{asof_str}</span>'
+          f'<span style="color:{BORDER_HI};">|</span>'
+          f'<span style="color:{TEXT_DIM};font-size:11px;">标的池</span>'
+          f'<span style="color:{ACCENT_UP};font-size:12px;font-weight:600;font-family:monospace;">{n}</span>'
+          + last_fetch_html +
+        '</div>'
+      '</div>'
+    '</div>'
+    )
+    st.markdown(header_html, unsafe_allow_html=True)
 
 # ============================================================
 # 顶部 KPI(只对 ETF 强弱 Tab 显示)
