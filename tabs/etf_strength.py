@@ -169,10 +169,8 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
 
     # 把分类(从 results)拼接到 history 表上
     cat_map = dict(zip(df_res["code"], df_res["category"]))
-    latest_label_map = dict(zip(df_res["code"], df_res["strength_label"]))
     df = df_hist.copy()
     df["分类"] = df["code"].map(cat_map).fillna("—")
-    df["最新"] = df["code"].map(latest_label_map).fillna("—")
 
     # === 筛选区 ===
     fc1, fc2, fc3 = st.columns([1, 1, 2])
@@ -198,7 +196,9 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
     if cat_filter:
         df = df[df["分类"].isin(cat_filter)]
     if label_filter:
-        df = df[df["最新"].isin(label_filter)]
+        # 用历史最后一天 (points[-1]) 当作「当前趋势」
+        if points:
+            df = df[df[points[-1]].isin(label_filter)]
     if search:
         s = search.lower()
         df = df[df["code"].astype(str).str.contains(s, case=False, na=False) |
@@ -214,25 +214,32 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
     col_rename = {p: (p.split("_")[1][5:10].replace("-", "-") if "_" in p else p)
                   for p in points_disp}
 
+    # 最新一天的日期 → 作为最后一个「当前分类」列的列名
+    latest_date = points[-1][2:] if len(points) else ""  # "2026-07-03"
+    latest_short = latest_date[5:] if len(latest_date) >= 10 else latest_date  # "07-03"
+
     # 先重命名所有点列(避免下面再用原始 key 找不到)
-    show = df[["code", "name", "分类", "最新"] + points].copy()
+    show = df[["code", "name", "分类"] + points].copy()
     show = show.rename(columns={"code": "代码", "name": "名称"})
     show = show.rename(columns=col_rename)
-    # 最新 → 色块
-    show["最新"] = show["最新"].apply(label_badge_html)
-    # 每天的趋势 → 色块 (现在 show 的列名已是重命名后的)
+    # 当前分类 = points[-1] 那列,重命名为具体日期
+    last_col = col_rename.get(points[-1], latest_short)
+    show = show.rename(columns={last_col: f"{latest_short} 分类"})
+    date_cols = [c for c in col_rename.values() if c in show.columns]
+    # 每天的趋势 → 色块 (注意:历史色块处理后再改最后一列)
     for orig_p, disp_col in col_rename.items():
-        if disp_col in show.columns:
+        if disp_col in show.columns and disp_col != last_col:
             show[disp_col] = show[disp_col].apply(_history_cell_html)
+    # 最右一列(最新日期)也用色块
+    show[f"{latest_short} 分类"] = show[f"{latest_short} 分类"].apply(label_badge_html)
 
     # 列顺序
-    base_cols = ["代码", "名称", "分类", "最新"]
-    date_cols = list(col_rename.values())
+    base_cols = ["代码", "名称", "分类"]
     show = show[base_cols + date_cols]
 
     st.caption(
         f"共 {len(show)} 只 · "
-        f"日期从左(最新 7/3)到右(最远 5/29) · "
+        f"日期从左(最新 {latest_short})到右(最远) · "
         f"共 {len(date_cols)} 天 · "
         f"色块🟥超强势 🟧强势 🟨震荡上涨 ⬜横盘震荡 🟦震荡下跌 🟫一直下跌"
     )
