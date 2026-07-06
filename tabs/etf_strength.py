@@ -229,12 +229,52 @@ def render_list_view(df_res: pd.DataFrame):
     render_table(df_view)
 
 
+def render_kpi(df: pd.DataFrame):
+    """ETF 强弱趋势 Tab 专属 KPI:标的池 + 6 档趋势分布"""
+    total_size = df["fund_size_yi"].sum() if "fund_size_yi" in df.columns else 0
+    cols = st.columns(7, gap="small")
+    with cols[0]:
+        st.markdown(
+            f'<div style="background:{BG_PANEL};border:1px solid {BORDER};'
+            f'border-radius:8px;padding:16px 18px;height:96px;">'
+            f'<div style="color:{TEXT_MUTED};font-size:11px;font-weight:500;'
+            f'letter-spacing:0.5px;text-transform:uppercase;">标的池 / 总规模</div>'
+            f'<div style="color:{TEXT};font-size:28px;font-weight:600;'
+            f'font-family:monospace;margin-top:6px;line-height:1.2;">{len(df):,}</div>'
+            f'<div style="color:{TEXT_DIM};font-size:11px;margin-top:4px;">'
+            f'{total_size:,.1f} 亿元</div></div>',
+            unsafe_allow_html=True,
+        )
+    for i, label in enumerate(LABEL_ORDER, start=1):
+        sub = df[df["strength_label"] == label]
+        count = len(sub)
+        size = sub["fund_size_yi"].sum() if "fund_size_yi" in sub.columns else 0
+        pct = count / len(df) * 100 if len(df) > 0 else 0
+        bg, _ = LABEL_COLORS[label]
+        with cols[i]:
+            st.markdown(
+                f'<div style="background:{BG_PANEL};border:1px solid {BORDER};'
+                f'border-radius:8px;padding:16px 18px;height:96px;">'
+                f'<div style="color:{TEXT_MUTED};font-size:11px;font-weight:500;'
+                f'letter-spacing:0.5px;text-transform:uppercase;">{label}</div>'
+                f'<div style="color:{bg};font-size:28px;font-weight:600;'
+                f'font-family:monospace;margin-top:6px;line-height:1.2;">{count}</div>'
+                f'<div style="color:{TEXT_DIM};font-size:11px;margin-top:4px;">'
+                f'{size:,.1f} 亿 · {pct:.1f}%</div></div>',
+                unsafe_allow_html=True,
+            )
+
+
 def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     """ETF 强弱趋势 Tab 入口(被 tabs/__init__.py 调用)
 
-    当前结构: 1 个 ETF 强弱 Tab + 内部 2 个子视图(详细列表 / 趋势演变)
+    当前结构: 1 个 ETF 强弱 Tab + 内部 KPI + 2 个子视图
     后续如果要把这两个子视图升级成独立顶层 Tab,改这里即可
     """
+    # KPI 只在 ETF Tab 内显示(其他 Tab 不要标的池/趋势分布这些 ETF 专用指标)
+    render_kpi(df_res)
+    st.markdown(f'<div style="height:16px"></div>', unsafe_allow_html=True)
+
     sub1, sub2 = st.tabs(["📋 详细列表", "🔥 趋势演变"])
     with sub1:
         render_list_view(df_res)
