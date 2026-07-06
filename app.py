@@ -258,31 +258,55 @@ def main():
             t_start = time.time()
             progress = st.progress(0, text="拉取趋势历史...")
 
-            # === Step 1: 拉 API 数据(秒级,不会超时) ===
+            # === Step 1: 拉 API 数据(秒级) ===
             api_res = refresh_data()
             if not api_res["ok"]:
                 progress.empty()
                 st.error(f"拉取数据失败: {api_res['error']}")
                 st.stop()
 
-            progress.progress(80, text="历史已写到本地...")
-            load_results.clear()
-            load_history.clear()
+            progress.progress(15, text="趋势历史已就绪,本地 v27 重算...")
+
+            # === Step 2: 本地全量 v27 重算(用最新 K 线真实算) ===
+            def on_progress(i, total, code, metrics, status):
+                pct = 15 + int((i / total) * 80)
+                progress.progress(min(pct, 99) / 100,
+                                   text=f"v27 重算 {i}/{total} · {code}")
+
+            try:
+                from fetch_data import recompute_locally
+                local_res = recompute_locally(progress_cb=on_progress)
+            except Exception as e:
+                progress.empty()
+                st.error(f"本地重算失败: {e}")
+                st.stop()
+
             progress.progress(100, text="完成")
             time.sleep(0.3)
             progress.empty()
 
-            st.session_state.refresh_state = api_res
+            if local_res["ok"] and local_res.get("n_etfs", 0) >= 50:
+                final = {**local_res, "mode": "local",
+                          "n_points": api_res.get("n_points", 0)}
+                label = "✅ 本地 v27 重算完成"
+            else:
+                final = api_res
+                label = "⚠️ 本地失败,回退 API 快照"
+
+            st.session_state.refresh_state = final
+            load_results.clear()
+            load_history.clear()
+
             elapsed = int((time.time() - t_start) * 1000)
             st.markdown(
                 f'<div style="background:{BG_PANEL};border:1px solid {ACCENT_DN};'
                 f'border-radius:8px;padding:14px 18px;margin-top:8px;">'
                 f'<div style="color:{ACCENT_DN};font-size:13px;font-weight:600;'
-                f'margin-bottom:4px;">✅ 趋势历史已刷新</div>'
+                f'margin-bottom:4px;">{label}</div>'
                 f'<div style="color:{TEXT};font-size:12px;line-height:1.7;'
                 f'font-family:monospace;">'
-                f'· 数据日期: <b>{api_res.get("asof_date", "—")}</b><br>'
-                f'· 标的池: <b>{api_res["n_etfs"]}</b> 只 ETF<br>'
+                f'· 数据日期(基于最新 K 线): <b>{final.get("asof_date", "—")}</b><br>'
+                f'· 标的池: <b>{final["n_etfs"]}</b> 只 ETF<br>'
                 f'· 趋势历史: <b>{api_res.get("n_points", 0)}</b> 天<br>'
                 f'· 耗时: <b>{elapsed}</b>ms</div></div>',
                 unsafe_allow_html=True,
