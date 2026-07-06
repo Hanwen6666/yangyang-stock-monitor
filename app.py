@@ -131,17 +131,23 @@ ASOF_FILE = DATA_DIR / ".asof"
 
 @st.cache_data(ttl=300)
 def load_results() -> pd.DataFrame:
-    return pd.read_csv(DATA_DIR / "results.csv")
+    p = DATA_DIR / "results.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    return pd.read_csv(p)
 
 @st.cache_data(ttl=300)
 def load_history() -> pd.DataFrame:
-    return pd.read_csv(DATA_DIR / "etf_trend_history.csv")
+    p = DATA_DIR / "etf_trend_history.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    return pd.read_csv(p)
 
 # ============================================================
 # 顶部 Header
 # ============================================================
 def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
-    asof = df["asof_date"].iloc[0] if "asof_date" in df.columns and len(df) else "—"
+    asof = df["asof_date"].iloc[0] if "asof_date" in df.columns and len(df) else refresh_state.get("asof_date", "—") if refresh_state else "—"
     if isinstance(asof, str) and len(asof) == 8 and asof.isdigit():
         asof_str = f"{asof[:4]}-{asof[4:6]}-{asof[6:]}"
     else:
@@ -200,13 +206,21 @@ def main():
 
     # 顶部 header + 刷新按钮 并排
     # 这里只调一次 render_header 即可,刷新按钮接在 header 后面
-    try:
-        df_res = load_results()
-        df_hist = load_history()
-    except FileNotFoundError as e:
-        st.error(f"❌ 数据文件缺失: {e}")
-        st.info("请先运行 `python fetch_data.py` 拉取数据")
-        st.stop()
+    df_res = load_results()
+    df_hist = load_history()
+    if df_res.empty:
+        # 首次启动,自动拉数据
+        from fetch_data import refresh_data
+        with st.spinner("首次启动,正在拉取数据..."):
+            api_res = refresh_data()
+        if api_res["ok"]:
+            load_results.clear()
+            load_history.clear()
+            df_res = load_results()
+            df_hist = load_history()
+            st.session_state.refresh_state = api_res
+        else:
+            st.warning(f"首次拉取数据失败: {api_res['error']}. 请点击上方按钮手动刷新。")
 
     # 渲染 header
     render_header(df_res, st.session_state.refresh_state)
