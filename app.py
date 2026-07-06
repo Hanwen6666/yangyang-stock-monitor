@@ -45,7 +45,7 @@ st.set_page_config(
     page_title="羊羊股市监测",
     page_icon="🐑",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
     menu_items={"About": "羊羊股市监测 · ETF 强弱趋势分析"},
 )
 
@@ -306,69 +306,6 @@ def render_kpi(df: pd.DataFrame):
 # ============================================================
 # 侧边栏筛选
 # ============================================================
-def render_sidebar(df: pd.DataFrame) -> dict:
-    with st.sidebar:
-        st.markdown("### 🎛️ 筛选")
-        cats = ["全部"] + sorted(df["category"].dropna().unique().tolist())
-        cat = st.selectbox("行业分类", cats, index=0, label_visibility="collapsed")
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-        labels = ["全部"] + LABEL_ORDER
-        label = st.selectbox("趋势标签", labels, index=0, label_visibility="collapsed")
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-        top_n = st.slider("Top N", 10, 200, 50, 10, label_visibility="collapsed")
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-        sort_options = {
-            "strength_label": "趋势强度",
-            "slope_50": "50日斜率",
-            "slope_20": "20日斜率",
-            "slope_120": "120日斜率",
-            "sharpe_composite": "综合夏普",
-            "adx": "ADX",
-            "up_ratio_60": "60日上涨占比",
-            "fund_size_yi": "规模(亿)",
-        }
-        sort_by = st.selectbox(
-            "排序字段", list(sort_options.keys()),
-            format_func=lambda k: sort_options[k], index=0,
-            label_visibility="collapsed",
-        )
-        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-        sort_dir_label = st.radio(
-            "排序方向", ["降序 ⬇", "升序 ⬆"],
-            horizontal=True, label_visibility="collapsed",
-        )
-        sort_dir = "desc" if "降" in sort_dir_label else "asc"
-
-        st.markdown("---")
-        search = st.text_input("🔍 搜索(代码/名称)", "", label_visibility="collapsed")
-        st.caption("支持 代码 / 名称 模糊搜索")
-
-    return {
-        "category": cat, "label": label, "top_n": top_n,
-        "sort_by": sort_by, "sort_dir": sort_dir, "search": search.strip().lower(),
-    }
-
-# ============================================================
-# 过滤 + 排序
-# ============================================================
-def apply_filters(df: pd.DataFrame, f: dict) -> pd.DataFrame:
-    out = df.copy()
-    if f["category"] != "全部":
-        out = out[out["category"] == f["category"]]
-    if f["label"] != "全部":
-        out = out[out["strength_label"] == f["label"]]
-    if f["search"]:
-        s = f["search"]
-        out = out[
-            out["code"].astype(str).str.contains(s, case=False, na=False) |
-            out["name"].astype(str).str.contains(s, case=False, na=False)
-        ]
-    return out
-
 def sort_df(df: pd.DataFrame, sort_by: str, sort_dir: str) -> pd.DataFrame:
     out = df.copy()
     ascending = (sort_dir == "asc")
@@ -419,13 +356,29 @@ def render_table(df: pd.DataFrame):
         return "color: #7a7f96"
 
     # 渲染 — 用 Styler 让"趋势"列展示色块
-    st.caption(f"显示前 {len(show)} 只 · 列名按金融习惯命名")
-    st.write(
-        show.to_html(escape=False, index=False, border=0, classes="etf-table"),
+    st.caption(f"共 {len(show)} 只 · 默认按趋势强度排序 · 表内可滚动")
+    st.markdown(
+        f'<div class="etf-table-wrap">'
+        f'{show.to_html(escape=False, index=False, border=0, classes="etf-table")}'
+        f'</div>',
         unsafe_allow_html=True,
     )
     st.markdown(f"""
     <style>
+      .etf-table-wrap {{
+        max-height: 720px;
+        overflow-y: auto;
+        overflow-x: auto;
+        border-radius: 8px;
+        border: 1px solid {BORDER};
+        background: {BG_PANEL};
+      }}
+      .etf-table-wrap::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+      .etf-table-wrap::-webkit-scrollbar-track {{ background: {BG_PANEL}; }}
+      .etf-table-wrap::-webkit-scrollbar-thumb {{
+        background: {BORDER_HI}; border-radius: 4px;
+      }}
+      .etf-table-wrap::-webkit-scrollbar-thumb:hover {{ background: {TEXT_DIM}; }}
       .etf-table {{
         width: 100%;
         border-collapse: collapse;
@@ -433,8 +386,6 @@ def render_table(df: pd.DataFrame):
         font-size: 13px;
         background: {BG_PANEL};
         border-radius: 8px;
-        overflow: hidden;
-        border: 1px solid {BORDER};
       }}
       .etf-table th {{
         background: {BG_PANEL_HI};
@@ -598,12 +549,9 @@ def main():
     render_header(df_res)
     render_kpi(df_res)
 
-    f = render_sidebar(df_res)
-
-    df_view = apply_filters(df_res, f)
-    df_view = sort_df(df_view, f["sort_by"], f["sort_dir"]).head(f["top_n"])
-
-    st.markdown(f'<div style="height:16px"></div>', unsafe_allow_html=True)
+    f = None  # 不再使用侧边栏筛选
+    # 按强度排序,全部展示
+    df_view = sort_df(df_res, "strength_label", "desc")
 
     # === Tab 1: 列表 ===
     # === Tab 2: 趋势演变 ===
