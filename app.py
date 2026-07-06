@@ -213,33 +213,34 @@ def main():
     # 渲染 header
     render_header(df_res, st.session_state.refresh_state)
 
-    # 单按钮:点一下 → 拉数据 + v27 本地重算 + 进度条
+    # 单按钮:点一下 → API 拉 history + v27 本地重算 + 进度条
     btn_col, info_col = st.columns([1, 9])
     with btn_col:
         clicked = st.button(
             "🔄 数据刷新",
-            help="拉取最新数据 + v27 本地重算指标(约 2 分钟)",
+            help="先拉最新趋势历史,再用 v27 算法重算当前指标(约 2 分钟)",
             use_container_width=True,
             type="primary",
         )
     with info_col:
         rs = st.session_state.refresh_state
         if clicked:
-            # === Step 1: 拉 API 数据 ===
-            progress = st.progress(0, text="拉取趋势历史数据...")
             t_start = time.time()
+            progress = st.progress(0, text="拉取趋势历史数据...")
+
+            # === Step 1: 拉 API 数据(只保留 trend_history) ===
             api_res = refresh_data()
             if not api_res["ok"]:
                 progress.empty()
                 st.error(f"拉取数据失败: {api_res['error']}")
             else:
-                progress.progress(15, text=f"趋势数据已拉取 ({api_res['elapsed_ms']}ms)")
-                # === Step 2: v27 本地重算 ===
+                progress.progress(15, text=f"趋势历史已就绪,开始 v27 重算...")
+                # === Step 2: v27 本地重算(覆盖 results.csv,保留 history) ===
                 total_etfs = api_res["n_etfs"]
                 log_box = st.empty()
 
                 def on_progress(i, total, code, metrics, status):
-                    pct = 15 + int((i / total) * 80)  # 15% → 95%
+                    pct = 15 + int((i / total) * 80)
                     msg = f"重算中 {i}/{total} · {code} · {status}"
                     progress.progress(min(pct, 99) / 100, text=msg)
                     if i % 10 == 0 or i == total:
@@ -256,13 +257,11 @@ def main():
                 time.sleep(0.3)
                 progress.empty()
 
-                # 决定用哪份数据
                 if local_res["ok"]:
-                    # 优先用本地算的(更新更准,基于当前时间点)
                     final = local_res
-                    st.session_state.refresh_state = {**local_res, "mode": "local"}
+                    st.session_state.refresh_state = {**local_res, "mode": "local",
+                                                      "n_points": api_res["n_points"]}
                 else:
-                    # 本地失败 → 回退到 API
                     final = api_res
                     st.session_state.refresh_state = {**api_res, "mode": "api-fallback",
                                                     "local_error": local_res["error"]}
@@ -270,7 +269,7 @@ def main():
                 load_results.clear()
                 load_history.clear()
 
-                # 顶部结果报告
+                elapsed = int((time.time() - t_start) * 1000)
                 st.markdown(
                     f'<div style="background:{BG_PANEL};border:1px solid '
                     f'{ACCENT_DN if final["ok"] else "#ff4d4f"};border-radius:8px;'
@@ -283,9 +282,7 @@ def main():
                     f'font-family:monospace;">'
                     f'· 数据日期: <b>{final.get("asof_date", "—")}</b><br>'
                     f'· 标的池: <b>{final["n_etfs"]}</b> 只 ETF<br>'
-                    f'· 趋势历史: <b>{final["n_points"]}</b> 天<br>'
-                    f'· 总耗时: <b>{int((time.time()-t_start)*1000)}</b>ms'
-                    f'{f"<br>· ⚠️ 本地重算失败,已回退到 API 数据" if final.get("mode") == "api-fallback" else ""}'
+                    f'· 总耗时: <b>{elapsed}</b>ms'
                     f'</div>'
                     f'</div>',
                     unsafe_allow_html=True,

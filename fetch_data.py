@@ -134,13 +134,12 @@ def recompute_locally(codes=None, progress_cb=None):
         asof = datetime.now().strftime("%Y%m%d")
         rows, cols = _build_results_csv_from_metrics(metrics_df, asof)
         write_csv(DATA_DIR / "results.csv", rows, cols)
-
-        # 趋势历史:基于本次的 metrics 简单生成(只有 1 个时间点,前 25 天无法重算)
-        # 这里复用 API 的 history(因为本地拉不到 25 天历史 K 线)
-        # 也可以留空让前端显示空
         (DATA_DIR / ".asof").write_text(asof, encoding="utf-8")
 
-        return {"ok": True, "asof_date": asof, "n_etfs": len(rows), "n_points": 0,
+        # 趋势历史:本地不重新构建,保留 etf_trend_history.csv
+        # 如果前端读到 n_points=0 表明没有历史,可以反查文件
+
+        return {"ok": True, "asof_date": asof, "n_etfs": len(rows), "n_points": -1,  # -1 表示保留文件中的历史
                 "fetched_at": datetime.now().isoformat(timespec="seconds"),
                 "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
                 "error": None, "mode": "local"}
