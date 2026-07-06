@@ -195,9 +195,20 @@ def render_history_heatmap(df_hist: pd.DataFrame, df_res: pd.DataFrame):
     )
 
 
-def render_list_view(df_res: pd.DataFrame):
-    """子视图 1:详细列表"""
-    df_view = sort_df(df_res, "strength_label", "desc")
+def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
+    """详细列表子视图
+
+    Args:
+        df_res: 全部 ETF 数据
+        label_filter: 可选,只展示指定趋势分类(如 "超强势")。None = 全部展示
+    """
+    if label_filter is not None:
+        df_view = df_res[df_res["strength_label"] == label_filter].copy()
+        df_view = sort_df(df_view, "strength_label", "desc")
+        title_extra = f" · {label_filter}"
+    else:
+        df_view = sort_df(df_res, "strength_label", "desc")
+        title_extra = ""
 
     c1, c2 = st.columns([1, 2])
     with c1: st.metric("标的池", f"{len(df_view):,} 只")
@@ -215,7 +226,10 @@ def render_list_view(df_res: pd.DataFrame):
                 unsafe_allow_html=True,
             )
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
-    render_table(df_view)
+    if df_view.empty:
+        st.info(f"该分类下暂无 ETF{title_extra}")
+    else:
+        render_table(df_view)
 
 
 def render_kpi(df: pd.DataFrame):
@@ -264,10 +278,21 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     render_kpi(df_res)
     st.markdown(f'<div style="height:16px"></div>', unsafe_allow_html=True)
 
-    sub1, sub2 = st.tabs(["📋 详细列表", "🔥 趋势演变"])
-    with sub1:
-        render_list_view(df_res)
-    with sub2:
+    # 6 个趋势分类子 Tab + 趋势演变
+    icons = {
+        "超强势":   "🟥",
+        "强势":     "🟧",
+        "震荡上涨": "🟨",
+        "横盘震荡": "⬜",
+        "震荡下跌": "🟦",
+        "一直下跌": "🟫",
+    }
+    labels = [f"{icons.get(l, '')} {l}" for l in LABEL_ORDER] + ["🔥 趋势演变"]
+    sub_tabs = st.tabs(labels)
+    for i, label in enumerate(LABEL_ORDER):
+        with sub_tabs[i]:
+            render_list_view(df_res, label_filter=label)
+    with sub_tabs[-1]:
         st.markdown(
             f'<p style="color:{TEXT_MUTED};font-size:13px;margin:0 0 8px 0">'
             f'🔥 近 25 天趋势演变(色块化热力图)</p>',

@@ -82,15 +82,22 @@ st.markdown(f"""
     gap: 4px;
     background: transparent;
     border-bottom: 1px solid {BORDER};
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    scrollbar-width: thin;
   }}
+  .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar {{ height: 4px; }}
+  .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-thumb {{ background: {BORDER_HI}; border-radius: 2px; }}
   .stTabs [data-baseweb="tab"] {{
-    height: 44px;
+    height: 40px;
     background: transparent;
     color: {TEXT_MUTED};
     border-radius: 6px 6px 0 0;
     font-weight: 500;
-    padding: 0 18px;
-    font-size: 14px;
+    padding: 0 14px;
+    font-size: 13px;
+    flex-shrink: 0;
   }}
   .stTabs [aria-selected="true"] {{
     background: {BG_PANEL};
