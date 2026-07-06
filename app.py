@@ -208,22 +208,22 @@ def main():
     # 这里只调一次 render_header 即可,刷新按钮接在 header 后面
     df_res = load_results()
     df_hist = load_history()
-    if df_res.empty:
-        # 首次启动,自动拉数据
-        from fetch_data import refresh_data
-        with st.spinner("首次启动,正在拉取数据..."):
-            api_res = refresh_data()
-        if api_res["ok"]:
-            load_results.clear()
-            load_history.clear()
-            df_res = load_results()
-            df_hist = load_history()
-            st.session_state.refresh_state = api_res
-        else:
-            st.warning(f"首次拉取数据失败: {api_res['error']}. 请点击上方按钮手动刷新。")
+    is_empty = df_res.empty
+    if is_empty:
+        # 首次启动 — 只显示提示,不自动调 API 防夸
+        st.markdown(
+            '<div style="background:#1a1f2e;border:1px solid #f59e0b;'
+            'border-radius:8px;padding:20px;text-align:center;margin:24px 0;">'
+            '<div style="color:#f59e0b;font-size:18px;font-weight:600;margin-bottom:8px;">'
+            '📊 暂无数据</div>'
+            '<div style="color:#9ca3af;font-size:13px;">'
+            '点击下方 <b>「数据刷新」</b> 按钮,拉取最新 ETF 数据并用 v27 算法重算(约 2 分钟)'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
 
     # 渲染 header
-    render_header(df_res, st.session_state.refresh_state)
+    render_header(df_res if not is_empty else pd.DataFrame(), st.session_state.refresh_state)
 
     # 单按钮:点一下 → API 拉 history + v27 本地重算 + 进度条
     btn_col, info_col = st.columns([1, 9])
