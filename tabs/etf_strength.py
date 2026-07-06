@@ -256,22 +256,17 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
 
 
 def _history_cell_html(label: str) -> str:
-    """历史表单元格:色块 + 文字"""
+    """历史表单元格:色块 + 文字(全称)"""
     if not label or pd.isna(label) or label == "":
         return '<span style="color:#54586b">—</span>'
     bg, fg = LABEL_COLORS.get(label, ("#3a4156", "#fff"))
-    # 缩写到单字 + 全称
-    short = {
-        "超强势": "超", "强势": "强", "震荡上涨": "涨",
-        "横盘震荡": "横", "震荡下跌": "跌", "一直下跌": "下",
-    }.get(label, "—")
     return (
-        f'<span title="{label}" style="'
+        f'<span style="'
         f'background:{bg};color:{fg};'
         f'padding:2px 6px;border-radius:3px;'
         f'font-size:11px;font-weight:600;'
-        f'display:inline-block;min-width:14px;text-align:center;'
-        f'cursor:help;">{short}</span>'
+        f'display:inline-block;text-align:center;'
+        f'white-space:nowrap;line-height:1.3;">{label}</span>'
     )
 
 
