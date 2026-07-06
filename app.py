@@ -208,6 +208,24 @@ def main():
     # 这里只调一次 render_header 即可,刷新按钮接在 header 后面
     df_res = load_results()
     df_hist = load_history()
+
+    # Fallback: 启动时 CSV 缺失 → 用仓库中的 seed CSV
+    if df_res.empty or df_hist.empty:
+        import shutil
+        for src_name, dst_name in [
+            ("_seed_results.csv", "results.csv"),
+            ("_seed_history.csv", "etf_trend_history.csv"),
+        ]:
+            src = DATA_DIR / src_name
+            dst = DATA_DIR / dst_name
+            if src.exists() and not dst.exists():
+                shutil.copy(src, dst)
+        # 重读
+        load_results.clear()
+        load_history.clear()
+        df_res = load_results()
+        df_hist = load_history()
+
     is_empty = df_res.empty
     if is_empty:
         # 首次启动 — 只显示提示,不自动调 API 防夸
@@ -250,24 +268,6 @@ def main():
             progress.progress(80, text="历史已写到本地...")
             load_results.clear()
             load_history.clear()
-
-            # === Step 2: 快速重算(异步采样) — 不报错则 try ===
-            progress.progress(85, text="v27 重算中(超时跳过)...")
-
-            def on_progress(i, total, code, metrics, status):
-                pct = 85 + int((i / total) * 12)
-                progress.progress(min(pct, 99) / 100, text=f"重算 {i}/{total}")
-
-            try:
-                from fetch_data import recompute_locally
-                local_res = recompute_locally(
-                    codes=["512760","510300","159995","518880","510230",
-                           "510210","159915","588000","516100","159766"],
-                    progress_cb=on_progress,
-                )
-            except Exception:
-                local_res = {"ok": False}
-
             progress.progress(100, text="完成")
             time.sleep(0.3)
             progress.empty()
