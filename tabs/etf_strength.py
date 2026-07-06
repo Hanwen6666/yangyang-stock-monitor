@@ -50,11 +50,6 @@ def label_badge_html(label: str) -> str:
     )
 
 
-def fmt_yi(v) -> str:
-    if pd.isna(v): return "—"
-    return f"{v:,.1f}"
-
-
 def sort_df(df: pd.DataFrame, sort_by: str = "strength_label", sort_dir: str = "desc") -> pd.DataFrame:
     out = df.copy()
     ascending = (sort_dir == "asc")
@@ -204,15 +199,9 @@ def render_list_view(df_res: pd.DataFrame):
     """子视图 1:详细列表"""
     df_view = sort_df(df_res, "strength_label", "desc")
 
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+    c1, c2 = st.columns([1, 2])
     with c1: st.metric("标的池", f"{len(df_view):,} 只")
     with c2:
-        total_s = df_view["fund_size_yi"].sum() if "fund_size_yi" in df_view.columns else 0
-        st.metric("规模合计", f"{fmt_yi(total_s)} 亿")
-    with c3:
-        avg_sharpe = df_view["sharpe_composite"].mean() if "sharpe_composite" in df_view.columns else 0
-        st.metric("平均夏普", f"{avg_sharpe:.2f}")
-    with c4:
         top = df_view.iloc[0] if len(df_view) else None
         if top is not None:
             bg, _ = LABEL_COLORS.get(top["strength_label"], ("#fff", "#fff"))
