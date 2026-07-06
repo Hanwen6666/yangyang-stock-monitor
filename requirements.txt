@@ -2,3 +2,6 @@ streamlit>=1.32
 pandas>=2.0
 plotly>=5.18
 numpy>=1.24
+# 本地重算(v27 算法)需要,首次部署会多 30s
+akshare>=1.12
+requests>=2.31
