@@ -145,36 +145,30 @@ def render_header(df: pd.DataFrame):
     else:
         asof_str = str(asof)
     n = len(df)
-    tab_count = len(TABS)
 
     st.markdown(f"""
     <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:4px;
-                padding-bottom:16px;border-bottom:1px solid {BORDER};">
+                padding-bottom:14px;border-bottom:1px solid {BORDER};">
       <div style="display:flex;align-items:baseline;gap:10px;">
-        <h1 style="margin:0;font-size:26px;font-weight:700;color:{TEXT};
+        <h1 style="margin:0;font-size:24px;font-weight:700;color:{TEXT};
                    letter-spacing:-0.5px;">
           羊羊股市监测
         </h1>
-        <span style="color:{TEXT_MUTED};font-size:14px;font-weight:400;">
-          多 Tab 股市分析
+        <span style="color:{TEXT_DIM};font-size:12px;font-weight:400;
+                     letter-spacing:0.5px;margin-left:4px;">
+          A 股 ETF · 趋势分析
         </span>
       </div>
-      <div style="margin-left:auto;display:flex;gap:24px;align-items:baseline;">
-        <div>
-          <span style="color:{TEXT_DIM};font-size:11px;">数据日期</span>
-          <span style="color:{TEXT};font-size:13px;font-weight:600;
-                       font-family:monospace;margin-left:6px;">{asof_str}</span>
-        </div>
-        <div>
-          <span style="color:{TEXT_DIM};font-size:11px;">标的池</span>
-          <span style="color:{ACCENT_UP};font-size:13px;font-weight:600;
-                       font-family:monospace;margin-left:6px;">{n} 只</span>
-        </div>
-        <div>
-          <span style="color:{TEXT_DIM};font-size:11px;">功能</span>
-          <span style="color:{TEXT_MUTED};font-size:13px;font-weight:600;
-                       font-family:monospace;margin-left:6px;">{tab_count} 个 Tab</span>
-        </div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px;
+                  background:{BG_PANEL};border:1px solid {BORDER};
+                  border-radius:6px;padding:5px 12px;">
+        <span style="color:{TEXT_DIM};font-size:11px;">数据日期</span>
+        <span style="color:{TEXT};font-size:12px;font-weight:600;
+                     font-family:monospace;">{asof_str}</span>
+        <span style="color:{BORDER_HI};">|</span>
+        <span style="color:{TEXT_DIM};font-size:11px;">标的池</span>
+        <span style="color:{ACCENT_UP};font-size:12px;font-weight:600;
+                     font-family:monospace;">{n}</span>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -202,10 +196,10 @@ def main():
     render_all_tabs(df_res, df_hist)
 
     st.markdown(f"""
-    <div style="margin-top:24px;padding-top:16px;border-top:1px solid {BORDER};
-                color:{TEXT_DIM};font-size:11px;text-align:center;">
-      🐑 羊羊股市监测 · 数据每 5 分钟缓存 ·
-      数据源:CloudBase API + AmazingData
+    <div style="margin-top:32px;padding-top:12px;border-top:1px solid {BORDER};
+                color:{TEXT_DIM};font-size:10px;text-align:center;
+                letter-spacing:0.5px;">
+      🐑 羊羊股市监测 · 5min cache · AmazingData via CloudBase
     </div>
     """, unsafe_allow_html=True)
 

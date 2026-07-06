@@ -84,7 +84,35 @@ def render_table(df: pd.DataFrame):
     })
     show["趋势"] = show["趋势"].apply(label_badge_html)
 
-    st.caption(f"共 {len(show)} 只 · 默认按趋势强度排序 · 表内可滚动")
+    # 数字格式化:千分位 + 智能精度
+    def fmt_int(v):
+        if pd.isna(v): return "—"
+        return f"{int(v):,}"
+
+    def fmt_num(v, d=2):
+        if pd.isna(v): return "—"
+        return f"{v:,.{d}f}"
+
+    def fmt_yi(v):
+        if pd.isna(v): return "—"
+        return f"{v:,.1f}"
+
+    def fmt_pct_val(v):
+        if pd.isna(v): return "—"
+        return f"{v*100:.1f}%"
+
+    if "代码" in show.columns:
+        show["代码"] = show["代码"].apply(fmt_int)
+    for col, prec in [("50日斜率", 2), ("20日斜率", 2), ("120日斜率", 2),
+                       ("夏普", 3), ("ADX", 2), ("样本", 0)]:
+        if col in show.columns:
+            show[col] = show[col].apply(lambda v, p=prec: fmt_num(v, p))
+    if "60日↑%" in show.columns:
+        show["60日↑%"] = show["60日↑%"].apply(fmt_pct_val)
+    if "规模(亿)" in show.columns:
+        show["规模(亿)"] = show["规模(亿)"].apply(fmt_yi)
+
+    st.caption(f"共 {len(show)} 只 · 按趋势强度排序 · 表内可滚动")
     st.markdown(
         f'<div class="etf-table-wrap">'
         f'{show.to_html(escape=False, index=False, border=0, classes="etf-table")}'
@@ -108,13 +136,15 @@ def render_table(df: pd.DataFrame):
       }}
       .etf-table th {{
         background: {BG_PANEL_HI}; color: {TEXT_MUTED}; font-weight: 500;
-        font-size: 11px; text-align: left; padding: 12px 14px;
+        font-size: 10px; text-align: left; padding: 10px 14px;
         border-bottom: 1px solid {BORDER}; text-transform: uppercase;
-        letter-spacing: 0.5px; white-space: nowrap;
+        letter-spacing: 0.6px; white-space: nowrap;
+        position: sticky; top: 0; z-index: 1;
       }}
       .etf-table td {{
-        padding: 12px 14px; border-bottom: 1px solid {BORDER};
+        padding: 10px 14px; border-bottom: 1px solid {BORDER};
         color: {TEXT}; white-space: nowrap; font-feature-settings: "tnum";
+        font-size: 13px;
       }}
       .etf-table tr:hover td {{ background: {BG_PANEL_HI}; }}
       .etf-table tr:last-child td {{ border-bottom: none; }}
@@ -133,13 +163,22 @@ def render_history_heatmap(df_hist: pd.DataFrame, df_res: pd.DataFrame):
         st.info("无趋势数据点")
         return
 
-    df_show = df_hist.head(50).copy()
-    n_show = min(15, len(points))
-    points_show = list(reversed(points))[:n_show]
+    # 控制项
+    c1, c2, _ = st.columns([1, 1, 4])
+    with c1:
+        max_n = min(50, len(df_hist))
+        n_rows = st.slider("显示只数", 5, max_n, min(20, max_n), 5,
+                           key="heat_n", label_visibility="collapsed")
+    with c2:
+        max_d = len(points)
+        n_days = st.slider("显示天数", 5, max_d, min(15, max_d), 1,
+                           key="heat_d", label_visibility="collapsed")
+
+    df_show = df_hist.head(n_rows).copy()
+    points_show = list(reversed(points))[:n_days]
 
     LABEL_NUM = {l: i for i, l in enumerate(LABEL_ORDER)}
-    z = []
-    text = []
+    z, text = [], []
     for _, row in df_show.iterrows():
         z_row, t_row = [], []
         for p in points_show:
@@ -151,7 +190,7 @@ def render_history_heatmap(df_hist: pd.DataFrame, df_res: pd.DataFrame):
 
     fig = go.Figure(data=go.Heatmap(
         z=z, text=text, texttemplate="%{text}",
-        textfont={"size": 10, "color": "#fff", "family": "PingFang SC"},
+        textfont={"size": 9, "color": "#fff", "family": "PingFang SC"},
         colorscale=[
             [0.0,  LABEL_COLORS["一直下跌"][0]],
             [0.2,  LABEL_COLORS["震荡下跌"][0]],
@@ -161,8 +200,9 @@ def render_history_heatmap(df_hist: pd.DataFrame, df_res: pd.DataFrame):
             [1.0,  LABEL_COLORS["超强势"][0]],
         ],
         zmin=0, zmax=5, showscale=False,
-        xgap=2, ygap=2,
-        hovertemplate="<b>%{y}</b><br>%{x}<br>趋势:%{text}<extra></extra>",
+        xgap=1, ygap=1,
+        hovertemplate="<b>%{customdata[0]}</b><br>%{x} · %{text}<extra></extra>",
+        customdata=[[f'{r["code"]} {r["name"]}'] * n_days for _, r in df_show.iterrows()],
     ))
 
     x_disp = []
@@ -173,23 +213,26 @@ def render_history_heatmap(df_hist: pd.DataFrame, df_res: pd.DataFrame):
         else:
             x_disp.append(date_str)
 
+    # Y 轴: 代码 + 名称 (HTML 渲染)
+    y_disp = [f'<b style="color:{TEXT_MUTED};font-family:monospace;font-size:10px;">{r["code"]}</b>'
+              f'  <span style="color:{TEXT};font-size:11px;">{r["name"]}</span>'
+              for _, r in df_show.iterrows()]
+
     fig.update_layout(
         paper_bgcolor=BG_PANEL, plot_bgcolor=BG_PANEL,
         font={"color": TEXT, "family": "Inter, -apple-system, sans-serif", "size": 12},
-        height=max(400, len(df_show) * 22 + 80),
+        height=max(400, n_rows * 22 + 80),
         xaxis=dict(side="top", tickmode="array", tickvals=x_disp, ticktext=x_disp,
                    showgrid=False, zeroline=False, tickfont=dict(color=TEXT_MUTED, size=10)),
         yaxis=dict(autorange="reversed", tickmode="array",
-                   tickvals=list(range(len(df_show))),
-                   ticktext=[f'{r["code"]} {r["name"]}' for _, r in df_show.iterrows()],
-                   showgrid=False, zeroline=False,
-                   tickfont=dict(color=TEXT, size=11, family="monospace")),
-        margin=dict(t=40, r=20, b=20, l=200),
+                   tickvals=list(range(n_rows)), ticktext=y_disp,
+                   showgrid=False, zeroline=False, tickson="boundaries",
+                   tickfont=dict(size=11)),
+        margin=dict(t=40, r=20, b=20, l=220),
     )
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
-        f"共 {len(df_show)} 只(超 50 请缩小筛选) · "
-        f"展示近 {n_show} 天 · "
+        f"展示 {n_rows} 只 · 近 {n_days} 天 · "
         f"日期从左(最新)到右(最远) · "
         f"色块🟥超强势 🟧强势 🟨震荡上涨 ⬜横盘震荡 🟦震荡下跌 🟫一直下跌"
     )
@@ -232,40 +275,67 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
         render_table(df_view)
 
 
+def kpi_card(title: str, value: str, sub: str, color: str, hover_color: str | None = None) -> str:
+    """统一 KPI 卡。hover_color:鼠标悬停时主数字颜色"""
+    return (
+        f'<div class="kpi-card" '
+        f'style="background:{BG_PANEL};border:1px solid {BORDER};'
+        f'border-radius:10px;padding:14px 16px;height:88px;'
+        f'transition:all 0.2s ease;cursor:default;">'
+        f'<div style="color:{TEXT_MUTED};font-size:11px;font-weight:500;'
+        f'letter-spacing:0.5px;text-transform:uppercase;'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{title}</div>'
+        f'<div class="kpi-value" style="color:{color};font-size:26px;font-weight:600;'
+        f'font-family:monospace;margin-top:4px;line-height:1.15;'
+        f'font-feature-settings:&quot;tnum&quot;;">{value}</div>'
+        f'<div style="color:{TEXT_DIM};font-size:11px;margin-top:3px;'
+        f'font-family:monospace;">{sub}</div>'
+        f'</div>'
+    )
+
+
 def render_kpi(df: pd.DataFrame):
     """ETF 强弱趋势 Tab 专属 KPI:标的池 + 6 档趋势分布"""
     total_size = df["fund_size_yi"].sum() if "fund_size_yi" in df.columns else 0
+    n_total = len(df)
+
+    # 注入 hover 样式
+    st.markdown(f"""
+    <style>
+      .kpi-card:hover {{
+        background:{BG_PANEL_HI} !important;
+        border-color:{BORDER_HI} !important;
+        transform: translateY(-1px);
+      }}
+      .kpi-card:hover .kpi-value {{
+        filter: brightness(1.2);
+      }}
+    </style>
+    """, unsafe_allow_html=True)
+
     cols = st.columns(7, gap="small")
+    # 总计
     with cols[0]:
-        st.markdown(
-            f'<div style="background:{BG_PANEL};border:1px solid {BORDER};'
-            f'border-radius:8px;padding:16px 18px;height:96px;">'
-            f'<div style="color:{TEXT_MUTED};font-size:11px;font-weight:500;'
-            f'letter-spacing:0.5px;text-transform:uppercase;">标的池 / 总规模</div>'
-            f'<div style="color:{TEXT};font-size:28px;font-weight:600;'
-            f'font-family:monospace;margin-top:6px;line-height:1.2;">{len(df):,}</div>'
-            f'<div style="color:{TEXT_DIM};font-size:11px;margin-top:4px;">'
-            f'{total_size:,.1f} 亿元</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(kpi_card(
+            "标的池",
+            f"{n_total:,}",
+            f"总规模 {total_size:,.1f} 亿元",
+            color=TEXT,
+        ), unsafe_allow_html=True)
+    # 6 档趋势
     for i, label in enumerate(LABEL_ORDER, start=1):
         sub = df[df["strength_label"] == label]
         count = len(sub)
         size = sub["fund_size_yi"].sum() if "fund_size_yi" in sub.columns else 0
-        pct = count / len(df) * 100 if len(df) > 0 else 0
+        pct = count / n_total * 100 if n_total > 0 else 0
         bg, _ = LABEL_COLORS[label]
         with cols[i]:
-            st.markdown(
-                f'<div style="background:{BG_PANEL};border:1px solid {BORDER};'
-                f'border-radius:8px;padding:16px 18px;height:96px;">'
-                f'<div style="color:{TEXT_MUTED};font-size:11px;font-weight:500;'
-                f'letter-spacing:0.5px;text-transform:uppercase;">{label}</div>'
-                f'<div style="color:{bg};font-size:28px;font-weight:600;'
-                f'font-family:monospace;margin-top:6px;line-height:1.2;">{count}</div>'
-                f'<div style="color:{TEXT_DIM};font-size:11px;margin-top:4px;">'
-                f'{size:,.1f} 亿 · {pct:.1f}%</div></div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(kpi_card(
+                label,
+                f"{count}",
+                f"{size:,.1f} 亿 · {pct:.1f}%",
+                color=bg,
+            ), unsafe_allow_html=True)
 
 
 def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
@@ -293,9 +363,4 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         with sub_tabs[i]:
             render_list_view(df_res, label_filter=label)
     with sub_tabs[-1]:
-        st.markdown(
-            f'<p style="color:{TEXT_MUTED};font-size:13px;margin:0 0 8px 0">'
-            f'🔥 近 25 天趋势演变(色块化热力图)</p>',
-            unsafe_allow_html=True,
-        )
         render_history_heatmap(df_hist, df_res)
