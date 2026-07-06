@@ -89,32 +89,41 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
     try:
         list_data = fetch(f"{base_url}/list?top_n=500", timeout)
         hist_data = fetch(f"{base_url}/trend-history", timeout)
+        items = list_data.get("items", [])
+        asof = list_data.get("asof_date", "")
+        cols = ["code", "name", "category", "strength_label", "fund_size_yi",
+                "slope_20", "slope_50", "slope_120", "sharpe_composite", "adx",
+                "up_ratio_60", "n_changes", "n_points", "asof_date"]
+        # API items 缺字段兜底
+        rows = []
+        for it in items:
+            r = dict(it)
+            r.setdefault("fund_size_yi", 0)
+            r.setdefault("category", "其他")
+            r["asof_date"] = asof
+            rows.append(r)
+        write_csv(DATA_DIR / "results.csv", rows, cols)
+
+        points = hist_data.get("points", [])
+        hist_rows = []
+        for it in hist_data.get("items", []):
+            row = {"code": it["code"], "name": it["name"]}
+            for p, v in zip(points, it.get("history", [])):
+                row[p] = v
+            hist_rows.append(row)
+        write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows, ["code", "name"] + points)
+        (DATA_DIR / ".asof").write_text(asof, encoding="utf-8")
+
+        return {"ok": True, "asof_date": asof, "n_etfs": len(items), "n_points": len(points),
+                "fetched_at": datetime.now().isoformat(timespec="seconds"),
+                "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
+                "error": None, "mode": "api"}
     except Exception as e:
-        return {"ok": False, "error": str(e), "fetched_at": t0.isoformat(timespec="seconds"),
-                "asof_date": None, "n_etfs": 0, "n_points": 0, "elapsed_ms": 0}
+        return {"ok": False, "error": str(e), "fetched_at": datetime.now().isoformat(timespec="seconds"),
+                "asof_date": None, "n_etfs": 0, "n_points": 0,
+                "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
+                "mode": "api"}
 
-    items = list_data.get("items", [])
-    asof = list_data.get("asof_date", "")
-    cols = ["code", "name", "category", "strength_label", "fund_size_yi",
-            "slope_20", "slope_50", "slope_120", "sharpe_composite", "adx",
-            "up_ratio_60", "n_changes", "n_points", "asof_date"]
-    write_csv(DATA_DIR / "results.csv",
-              [{**it, "asof_date": asof} for it in items], cols)
-
-    points = hist_data.get("points", [])
-    hist_rows = []
-    for it in hist_data.get("items", []):
-        row = {"code": it["code"], "name": it["name"]}
-        for p, v in zip(points, it.get("history", [])):
-            row[p] = v
-        hist_rows.append(row)
-    write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows, ["code", "name"] + points)
-    (DATA_DIR / ".asof").write_text(asof, encoding="utf-8")
-
-    return {"ok": True, "asof_date": asof, "n_etfs": len(items), "n_points": len(points),
-            "fetched_at": datetime.now().isoformat(timespec="seconds"),
-            "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
-            "error": None, "mode": "api"}
 
 
 def recompute_locally(codes=None, progress_cb=None):
