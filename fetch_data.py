@@ -15,6 +15,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
+
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DEFAULT_BASE = "https://agentchat-d0gsw7sn6c36f0b00.service.tcloudbase.com/api/etf-strength"
@@ -36,20 +38,23 @@ def write_csv(path, rows, fieldnames):
 
 def _build_results_csv_from_metrics(metrics_df, asof_date):
     """把算法输出转成 results.csv 格式"""
-    # 合并 category(从 ETF 基础信息取,这里简化:从默认池文件读)
-    pool_path = Path("/home/ubuntu/.openclaw/workspace/etf_strong_weak/etf_final_207.csv")
+    # 合并 category/name/fund_size
+    pool_path = DATA_DIR / "etf_pool.csv"
     cat_map = {}
     name_map = {}
     fund_size_map = {}
-    if pool_path.exists():
-        pool = pd.read_csv(pool_path) if 'pd' in dir() else None
-    # 简化:用 etf_strong_weak CSV 补全
     try:
-        import pandas as _pd
-        pool = _pd.read_csv(pool_path, dtype={"代码": str})
-        cat_map = dict(zip(pool["代码"], pool["theme"] if "theme" in pool.columns else pool.get("category", "其他")))
-        name_map = dict(zip(pool["代码"], pool["名称"]))
-        fund_size_map = dict(zip(pool["代码"], pool["fund_size_yi"]))
+        if pool_path.exists():
+            pool = pd.read_csv(pool_path, dtype={"代码": str})
+            # 分类列:有 theme 用 theme,有 cluster 用 cluster,都没有就"其他"
+            cat_col = None
+            for c in ["theme", "cluster", "category"]:
+                if c in pool.columns: cat_col = c; break
+            cat_map = dict(zip(pool["代码"], pool[cat_col].astype(str) if cat_col else "其他"))
+            name_map = dict(zip(pool["代码"], pool["名称"]))
+            fund_size_map = dict(zip(pool["代码"].astype(str), pool["fund_size_yi"].astype(float)))
+    except Exception:
+        pass
     except Exception:
         pass
 
@@ -124,10 +129,13 @@ def recompute_locally(codes=None, progress_cb=None):
     t0 = datetime.now()
     try:
         if codes is None:
-            # 从池文件读
-            pool_path = Path("/home/ubuntu/.openclaw/workspace/etf_strong_weak/etf_final_207.csv")
-            pool = pd.read_csv(pool_path, dtype={"代码": str})
-            codes = pool["代码"].tolist()
+            # 从项目内池文件读(不依赖外部路径)
+            pool_path = DATA_DIR / "etf_pool.csv"
+            if pool_path.exists():
+                pool = pd.read_csv(pool_path, dtype={"代码": str})
+                codes = pool["代码"].tolist()
+            else:
+                codes = []
 
         print(f"[recompute] {len(codes)} 只 ETF,启动 v27 算法...")
         metrics_df = algo.compute_all_metrics(codes, progress_callback=progress_cb)
