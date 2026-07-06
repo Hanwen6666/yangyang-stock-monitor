@@ -146,7 +146,16 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
 
 
 def recompute_locally(codes=None, progress_cb=None):
-    """用 v27 算法本地重算(慢,5-10min)
+    """用 v27 算法本地重算 — 算当前分类 + 生成 25 天趋势历史
+
+    流程:
+      1. 从池文件读 codes (或直接传入)
+      2. 预拉每只 K 线 275 天 (250+25),存为 cache
+      3. 对每只 ETF:
+         - 计算当前分类(最后 250 天)
+         - 回看 25 天,每天往前移 1 个交易日重新分
+         - 累计 25 个标签
+      4. 写 results.csv + etf_trend_history.csv + .asof
 
     Returns: dict (同 refresh_data 格式)
     """
@@ -157,30 +166,108 @@ def recompute_locally(codes=None, progress_cb=None):
     t0 = datetime.now()
     try:
         if codes is None:
-            # 从项目内池文件读(不依赖外部路径)
             pool_path = DATA_DIR / "etf_pool.csv"
             if pool_path.exists():
                 pool = pd.read_csv(pool_path, dtype={"代码": str})
                 codes = pool["代码"].tolist()
+                name_map = dict(zip(pool["代码"], pool["名称"]))
             else:
-                codes = []
+                codes = []; name_map = {}
+        else:
+            name_map = {}
 
-        print(f"[recompute] {len(codes)} 只 ETF,启动 v27 算法...")
-        metrics_df = algo.compute_all_metrics(codes, progress_callback=progress_cb)
+        total = len(codes)
+        print(f"[recompute] {total} 只 ETF,启动 v27...")
+
+        # 预拉所有 K 线(避免重复网络 I/O)
+        kline_cache = {}
+        for i, code in enumerate(codes):
+            kw = algo.fetch_kline(code, min_len=275)
+            if kw is not None and len(kw) >= 250:
+                kw = kw.dropna(subset=["close"]).reset_index(drop=True)
+                kline_cache[code] = kw
+            if progress_cb:
+                progress_cb(i + 1, total, code, None, "kline")
+
+        print(f"K 线缓存: {len(kline_cache)}/{total} 只")
+
+        # 计算所有指标 + 25 天历史
+        metrics_rows = []
+        hist_rows = []
+        # 确定 25 天日期列名
+        # 从第一只 K 线获取日期区间
+        first_k = list(kline_cache.values())[0] if kline_cache else None
+        if first_k is not None:
+            dates = pd.to_datetime(first_k["date"]).dt.strftime("%Y%m%d").tolist()
+            # 取最后 25 个交易日作为历史点
+            hist_dates = dates[-(25):] if len(dates) >= 25 else dates
+        else:
+            hist_dates = [f"d_{i}" for i in range(25)]
+
+        done = 0
+        for code in codes:
+            kw = kline_cache.get(code)
+            if kw is None:
+                if progress_cb:
+                    progress_cb(done + 1, total, code, None, "no kline")
+                done += 1
+                continue
+
+            close = kw["close"].astype(float).values
+            high = kw["high"].astype(float).values if "high" in kw.columns else close
+            low = kw["low"].astype(float).values if "low" in kw.columns else close
+
+            # 当前分类
+            m = algo.calc_single_etf(kw)
+            if m is None:
+                if progress_cb:
+                    progress_cb(done + 1, total, code, None, "calc fail")
+                done += 1
+                continue
+
+            row = {"code": code, **m}
+            metrics_rows.append(row)
+
+            # 回看 25 天
+            labels_25 = []
+            for offset in range(25):
+                end_idx = len(kw) - 1 - offset
+                chunk = kw.iloc[max(0, end_idx - 249):end_idx + 1].reset_index(drop=True)
+                lbl = algo.calc_single_etf(chunk)
+                labels_25.append(lbl["strength_label"] if lbl else "未知")
+            labels_25.reverse()  # 最早日期在前
+
+            hist = {"code": code, "name": name_map.get(code, code)}
+            for t, lbl in enumerate(labels_25):
+                hist[f"d_{hist_dates[t]}"] = lbl if len(hist_dates) > t else lbl
+            hist_rows.append(hist)
+
+            done += 1
+            if progress_cb:
+                progress_cb(done, total, code, m, "ok")
+
         asof = datetime.now().strftime("%Y%m%d")
+        metrics_df = pd.DataFrame(metrics_rows)
         rows, cols = _build_results_csv_from_metrics(metrics_df, asof)
         write_csv(DATA_DIR / "results.csv", rows, cols)
+
+        # 写 trend_history — 列: code, name, d_20260529, ..., d_20260706
+        if hist_rows:
+            hist_cols = ["code", "name"] + [f"d_{d}" for d in hist_dates]
+            write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows, hist_cols)
+
         (DATA_DIR / ".asof").write_text(asof, encoding="utf-8")
 
-        # 趋势历史:本地不重新构建,保留 etf_trend_history.csv
-        # 如果前端读到 n_points=0 表明没有历史,可以反查文件
-
-        return {"ok": True, "asof_date": asof, "n_etfs": len(rows), "n_points": -1,  # -1 表示保留文件中的历史
+        return {"ok": True, "asof_date": asof, "n_etfs": len(rows),
+                "n_points": 25,
                 "fetched_at": datetime.now().isoformat(timespec="seconds"),
                 "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
                 "error": None, "mode": "local"}
     except Exception as e:
-        return {"ok": False, "error": str(e), "fetched_at": t0.isoformat(timespec="seconds"),
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": str(e),
+                "fetched_at": datetime.now().isoformat(timespec="seconds"),
                 "asof_date": None, "n_etfs": 0, "n_points": 0, "elapsed_ms": 0,
                 "mode": "local"}
 

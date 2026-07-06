@@ -270,8 +270,9 @@ def main():
             # === Step 2: 本地全量 v27 重算(用最新 K 线真实算) ===
             def on_progress(i, total, code, metrics, status):
                 pct = 15 + int((i / total) * 80)
+                phase = "拉 K 线" if status == "kline" else "重算"
                 progress.progress(min(pct, 99) / 100,
-                                   text=f"v27 重算 {i}/{total} · {code}")
+                                   text=f"{phase} {i}/{total} · {code}")
 
             try:
                 from fetch_data import recompute_locally
