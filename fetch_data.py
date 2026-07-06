@@ -208,6 +208,17 @@ def recompute_locally(codes=None, progress_cb=None):
         for code in codes:
             kw = kline_cache.get(code)
             if kw is None:
+                # 缺失 K 线 → 填 N/A,不跳过 — 保证 207 只不丢
+                row = {"code": code, "category": name_map.get(code, code),
+                       "strength_label": "N/A", "fund_size_yi": 0,
+                       "slope_20": 0, "slope_50": 0, "slope_120": 0,
+                       "sharpe_composite": 0, "adx": 0, "up_ratio_60": 0,
+                       "n_changes": 0, "n_points": 25}
+                metrics_rows.append(row)
+                hist = {"code": code, "name": name_map.get(code, code)}
+                for t, _d in enumerate(hist_dates):
+                    hist[f"d_{_d}"] = "未知"
+                hist_rows.append(hist)
                 if progress_cb:
                     progress_cb(done + 1, total, code, None, "no kline")
                 done += 1
