@@ -153,7 +153,11 @@ def render_table(df: pd.DataFrame):
     """, unsafe_allow_html=True)
 
 
-def render_history_heatmap(df_hist: pd.DataFrame, df_res: pd.DataFrame):
+def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
+    """趋势演变子视图 — 表格形式 + 筛选 + 全部 ETF
+
+    列: 代码 / 名称 / 分类 / [25 天趋势标签] / 最新趋势
+    """
     if df_hist.empty or df_res.empty:
         st.info("暂无趋势历史数据")
         return
@@ -163,78 +167,111 @@ def render_history_heatmap(df_hist: pd.DataFrame, df_res: pd.DataFrame):
         st.info("无趋势数据点")
         return
 
-    # 控制项
-    c1, c2, _ = st.columns([1, 1, 4])
-    with c1:
-        max_n = min(50, len(df_hist))
-        n_rows = st.slider("显示只数", 5, max_n, min(20, max_n), 5,
-                           key="heat_n", label_visibility="collapsed")
-    with c2:
-        max_d = len(points)
-        n_days = st.slider("显示天数", 5, max_d, min(15, max_d), 1,
-                           key="heat_d", label_visibility="collapsed")
+    # 把分类(从 results)拼接到 history 表上
+    cat_map = dict(zip(df_res["code"], df_res["category"]))
+    latest_label_map = dict(zip(df_res["code"], df_res["strength_label"]))
+    df = df_hist.copy()
+    df["分类"] = df["code"].map(cat_map).fillna("—")
+    df["最新"] = df["code"].map(latest_label_map).fillna("—")
 
-    df_show = df_hist.head(n_rows).copy()
-    points_show = list(reversed(points))[:n_days]
+    # === 筛选区 ===
+    fc1, fc2, fc3 = st.columns([1, 1, 2])
+    with fc1:
+        cats = sorted(df["分类"].dropna().unique().tolist())
+        cat_filter = st.multiselect(
+            "行业分类", cats, default=[],
+            placeholder="全部(不选即全部)",
+            label_visibility="collapsed",
+        )
+    with fc2:
+        label_filter = st.multiselect(
+            "当前趋势", LABEL_ORDER, default=[],
+            placeholder="全部(不选即全部)",
+            label_visibility="collapsed",
+        )
+    with fc3:
+        search = st.text_input(
+            "🔍 搜索", "", placeholder="代码或名称模糊搜索", label_visibility="collapsed"
+        )
 
-    LABEL_NUM = {l: i for i, l in enumerate(LABEL_ORDER)}
-    z, text = [], []
-    for _, row in df_show.iterrows():
-        z_row, t_row = [], []
-        for p in points_show:
-            v = row[p] if pd.notna(row[p]) else ""
-            z_row.append(LABEL_NUM.get(v, -1))
-            t_row.append(v if v else "—")
-        z.append(z_row)
-        text.append(t_row)
+    # 应用筛选
+    if cat_filter:
+        df = df[df["分类"].isin(cat_filter)]
+    if label_filter:
+        df = df[df["最新"].isin(label_filter)]
+    if search:
+        s = search.lower()
+        df = df[df["code"].astype(str).str.contains(s, case=False, na=False) |
+                df["name"].astype(str).str.contains(s, case=False, na=False)]
 
-    fig = go.Figure(data=go.Heatmap(
-        z=z, text=text, texttemplate="%{text}",
-        textfont={"size": 9, "color": "#fff", "family": "PingFang SC"},
-        colorscale=[
-            [0.0,  LABEL_COLORS["一直下跌"][0]],
-            [0.2,  LABEL_COLORS["震荡下跌"][0]],
-            [0.4,  LABEL_COLORS["横盘震荡"][0]],
-            [0.6,  LABEL_COLORS["震荡上涨"][0]],
-            [0.8,  LABEL_COLORS["强势"][0]],
-            [1.0,  LABEL_COLORS["超强势"][0]],
-        ],
-        zmin=0, zmax=5, showscale=False,
-        xgap=1, ygap=1,
-        hovertemplate="<b>%{customdata[0]}</b><br>%{x} · %{text}<extra></extra>",
-        customdata=[[f'{r["code"]} {r["name"]}'] * n_days for _, r in df_show.iterrows()],
-    ))
+    if df.empty:
+        st.info("无匹配 ETF")
+        return
 
-    x_disp = []
-    for p in points_show:
-        date_str = p.split("_")[1] if "_" in p else p
-        if "-" in date_str and len(date_str) == 10:
-            x_disp.append(f"{date_str[5:7]}/{date_str[8:10]}")
-        else:
-            x_disp.append(date_str)
+    # === 构建展示表 ===
+    # 日期列名 d_2026-07-03 → 07-03 (从最新到最远)
+    points_disp = list(reversed(points))  # 最新在左
+    col_rename = {p: (p.split("_")[1][5:10].replace("-", "-") if "_" in p else p)
+                  for p in points_disp}
 
-    # Y 轴: 代码 + 名称 (HTML 渲染)
-    y_disp = [f'<b style="color:{TEXT_MUTED};font-family:monospace;font-size:10px;">{r["code"]}</b>'
-              f'  <span style="color:{TEXT};font-size:11px;">{r["name"]}</span>'
-              for _, r in df_show.iterrows()]
+    # 先重命名所有点列(避免下面再用原始 key 找不到)
+    show = df[["code", "name", "分类", "最新"] + points].copy()
+    show = show.rename(columns={"code": "代码", "name": "名称"})
+    show = show.rename(columns=col_rename)
+    # 最新 → 色块
+    show["最新"] = show["最新"].apply(label_badge_html)
+    # 每天的趋势 → 色块 (现在 show 的列名已是重命名后的)
+    for orig_p, disp_col in col_rename.items():
+        if disp_col in show.columns:
+            show[disp_col] = show[disp_col].apply(_history_cell_html)
 
-    fig.update_layout(
-        paper_bgcolor=BG_PANEL, plot_bgcolor=BG_PANEL,
-        font={"color": TEXT, "family": "Inter, -apple-system, sans-serif", "size": 12},
-        height=max(400, n_rows * 22 + 80),
-        xaxis=dict(side="top", tickmode="array", tickvals=x_disp, ticktext=x_disp,
-                   showgrid=False, zeroline=False, tickfont=dict(color=TEXT_MUTED, size=10)),
-        yaxis=dict(autorange="reversed", tickmode="array",
-                   tickvals=list(range(n_rows)), ticktext=y_disp,
-                   showgrid=False, zeroline=False, tickson="boundaries",
-                   tickfont=dict(size=11)),
-        margin=dict(t=40, r=20, b=20, l=220),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    # 列顺序
+    base_cols = ["代码", "名称", "分类", "最新"]
+    date_cols = list(col_rename.values())
+    show = show[base_cols + date_cols]
+
     st.caption(
-        f"展示 {n_rows} 只 · 近 {n_days} 天 · "
-        f"日期从左(最新)到右(最远) · "
+        f"共 {len(show)} 只 · "
+        f"日期从左(最新 7/3)到右(最远 5/29) · "
+        f"共 {len(date_cols)} 天 · "
         f"色块🟥超强势 🟧强势 🟨震荡上涨 ⬜横盘震荡 🟦震荡下跌 🟫一直下跌"
+    )
+    st.markdown(
+        f'<div class="etf-table-wrap">'
+        f'{show.to_html(escape=False, index=False, border=0, classes="etf-table history-table")}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    # 给历史表格加专门的样式: 日期列用色块
+    st.markdown(f"""
+    <style>
+      .history-table th {{ min-width: 36px; text-align: center !important; }}
+      .history-table td {{ text-align: center; }}
+      .history-table td:first-child,
+      .history-table td:nth-child(2),
+      .history-table td:nth-child(3),
+      .history-table td:nth-child(4) {{ text-align: left; }}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def _history_cell_html(label: str) -> str:
+    """历史表单元格:色块 + 文字"""
+    if not label or pd.isna(label) or label == "":
+        return '<span style="color:#54586b">—</span>'
+    bg, fg = LABEL_COLORS.get(label, ("#3a4156", "#fff"))
+    # 缩写到单字 + 全称
+    short = {
+        "超强势": "超", "强势": "强", "震荡上涨": "涨",
+        "横盘震荡": "横", "震荡下跌": "跌", "一直下跌": "下",
+    }.get(label, "—")
+    return (
+        f'<span title="{label}" style="'
+        f'background:{bg};color:{fg};'
+        f'padding:2px 6px;border-radius:3px;'
+        f'font-size:11px;font-weight:600;'
+        f'display:inline-block;min-width:14px;text-align:center;'
+        f'cursor:help;">{short}</span>'
     )
 
 
@@ -363,4 +400,4 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         with sub_tabs[i]:
             render_list_view(df_res, label_filter=label)
     with sub_tabs[-1]:
-        render_history_heatmap(df_hist, df_res)
+        render_history_table(df_hist, df_res)
