@@ -2,3 +2,8 @@
 data/results.csv
 data/etf_trend_history.csv
 data/.asof
+
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
