@@ -41,16 +41,26 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
     """把算法输出转成 results.csv 格式"""
     # 合并 category/name/fund_size
     pool_path = DATA_DIR / "etf_pool.csv"
-    cat_map = {}
+    cat_path = DATA_DIR / "industry_category.csv"
     name_map = {}
     fund_size_map = {}
+    cat_map = {}
+    try:
+        # 优先从 industry_category.csv 读真实行业分类（字段名 行业分类）
+        if cat_path.exists():
+            cat_df = pd.read_csv(cat_path, dtype={"代码": str})
+            cat_map = dict(zip(cat_df["代码"], cat_df["行业分类"]))
+    except Exception:
+        pass
     try:
         if pool_path.exists():
             pool = pd.read_csv(pool_path, dtype={"代码": str})
-            cat_col = next((c for c in ["theme", "cluster", "category"] if c in pool.columns), None)
-            cat_map = dict(zip(pool["代码"], pool[cat_col].astype(str) if cat_col else "其他"))
             name_map = dict(zip(pool["代码"], pool["名称"]))
             fund_size_map = dict(zip(pool["代码"].astype(str), pool["fund_size_yi"].astype(float)))
+            # 如果 cat_map 为空,从 etf_pool 兜底
+            if not cat_map:
+                cat_col = next((c for c in ["theme", "cluster", "category"] if c in pool.columns), None)
+                cat_map = dict(zip(pool["代码"], pool[cat_col].astype(str) if cat_col else "其他"))
     except Exception:
         pass
 
@@ -114,7 +124,7 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
         write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows, ["code", "name"] + points)
         # 用腾讯源 K 线确认实际最新日期,避免 API 滞后
         try:
-            sys.path.insert(0, str(Path(__file__).parent / "lib"))
+            sys.path.insert(0, str(Path(__file__).parent))
             from lib import algorithm as algo_fix
             _k = algo_fix.fetch_kline_tencent("510300")
             if _k is not None:
@@ -181,23 +191,7 @@ def recompute_locally(codes=None, progress_cb=None):
         kline_cache = {}
         for i, code in enumerate(codes):
             kw = algo.fetch_kline(code, min_len=250)
-            # 如果新浪失败且数据 < 250 天,用腾讯源降级
-            if kw is None or len(kw) < 100:
-                try:
-                    r2 = requests.get(
-                        'http://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
-                        params={'param': f"{'sh' if code.startswith('5') or code.startswith('1') else 'sz'}{code},day,,,640,qfq"},
-                        timeout=10,
-                    )
-                    if r2.status_code == 200:
-                        d2 = r2.json().get('data',{})
-                        txkey = ('sh' if code.startswith('5') or code.startswith('1') else 'sz') + code
-                        kl2 = d2.get(txkey,{}).get('qfqday') or d2.get(txkey,{}).get('day')
-                        if kl2 and len(kl2) >= 100:
-                            kw = pd.DataFrame(kl2, columns=['date','open','close','high','low','volume'])
-                            kw[['open','close','high','low','volume']] = kw[['open','close','high','low','volume']].astype(float)
-                except Exception:
-                    pass
+            # algo.fetch_kline 内部已有三源交叉验证(Sina+Tencent+163),无需单独降级
             if kw is not None and len(kw) >= 100:
                 kw = kw.dropna(subset=["close"]).reset_index(drop=True)
                 # 新 ETF(<250 天):前向 pad 到 250

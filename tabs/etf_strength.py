@@ -17,9 +17,9 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from lib.constants import (  # noqa: E402
-    BG, BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
+    BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
-    LABEL_COLORS, LABEL_ORDER, SHORT_MAP, classify_name,
+    LABEL_COLORS, LABEL_ORDER, SHORT_MAP,
 )
 from lib import algorithm as algo
 
