@@ -437,31 +437,43 @@ def render_kpi(df: pd.DataFrame):
 
 
 def render_stock_detail(df_res: pd.DataFrame):
-    """个股 ETF 分析子视图:输入代码 → K 线 + 趋势指标"""
+    """个股 ETF 分析子视图:支持代码/中文名称模糊检索 → K 线 + 趋势指标"""
     st.markdown(f'<div style="margin-bottom:8px;"></div>', unsafe_allow_html=True)
 
-    # 输入框 + 按钮
-    c1, c2 = st.columns([2, 1])
+    # 构建检索索引
+    search_items = []
+    for _, r in df_res.iterrows():
+        code = str(r["code"]).zfill(6)
+        name = str(r.get("name", ""))
+        search_items.append({"code": code, "name": name, "label": f"{code} {name}"})
+
+    # 输入框自动补全
+    search_labels = [s["label"] for s in search_items]
+
+    c1, c2 = st.columns([3, 1])
     with c1:
-        code_input = st.text_input(
-            "", "", placeholder="输入 ETF 代码 (如 159845)",
+        selected = st.selectbox(
+            "", search_labels,
+            index=None,
+            placeholder="输入代码或中文名称搜索...",
             label_visibility="collapsed",
         )
     with c2:
         go_btn = st.button("🔍 分析", use_container_width=True, type="primary")
 
-    if not code_input or not go_btn:
+    if not selected or not go_btn:
         st.markdown(
             f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
             f'padding:32px 0;border:1px dashed {BORDER};border-radius:8px;">'
-            f'输入 ETF 代码后点击分析</div>',
+            f'搜索并选择 ETF 后点击分析</div>',
             unsafe_allow_html=True,
         )
         return
 
-    code = code_input.strip().zfill(6)
+    code = selected.split()[0].strip().zfill(6)
+    etf_name = selected.split()[-1] if len(selected.split()) > 1 else ""
 
-    with st.spinner(f"正在获取 {code} 的 K 线数据..."):
+    with st.spinner(f"正在获取 {code} {etf_name} 的 K 线数据..."):
         kline = algo.fetch_kline(code, min_len=100)
 
     if kline is None or len(kline) < 100:
