@@ -284,18 +284,11 @@ def main():
             load_history.clear()
 
             elapsed = int((time.time() - t_start) * 1000)
-            st.markdown(
-                f'<div style="background:{BG_PANEL};border:1px solid {ACCENT_DN};'
-                f'border-radius:8px;padding:14px 18px;margin-top:8px;">'
-                f'<div style="color:{ACCENT_DN};font-size:13px;font-weight:600;'
-                f'margin-bottom:4px;">{label}</div>'
-                f'<div style="color:{TEXT};font-size:12px;line-height:1.7;'
-                f'font-family:monospace;">'
-                f'· 数据日期(基于最新 K 线): <b>{final.get("asof_date", "—")}</b><br>'
-                f'· 标的池: <b>{final["n_etfs"]}</b> 只 ETF<br>'
-                f'· 趋势历史: <b>{api_res.get("n_points", 0)}</b> 天<br>'
-                f'· 耗时: <b>{elapsed}</b>ms</div></div>',
-                unsafe_allow_html=True,
+            st.toast(
+                "刷新完成: " + label + " · " + str(final['n_etfs'])
+                + "只ETF · " + str(api_res.get('n_points', 0))
+                + "天 · " + str(elapsed) + "ms",
+                icon="📊",
             )
             st.rerun()
         elif rs:
