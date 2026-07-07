@@ -471,7 +471,7 @@ def _quote_row_html(code, name, price, change_pct, direction):
     """
 
 
-def _kline_chart_html(kw_250, m):
+def _kline_chart_html(kw_250):
     """东财风格 K 线图:主流+成交量副图(底部色柱)"""
     close = kw_250["close"].astype(float).values
     dates = pd.to_datetime(kw_250["date"])
@@ -644,7 +644,7 @@ def render_stock_detail(df_res: pd.DataFrame):
                 unsafe_allow_html=True)
 
     # === K 线图(主图+成交量副图) ===
-    fig = _kline_chart_html(kw_250, m)
+    fig = _kline_chart_html(kw_250)
     st.plotly_chart(fig, use_container_width=True, config={
         "displayModeBar": False,
         "scrollZoom": True,
