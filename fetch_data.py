@@ -19,6 +19,8 @@ import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from lib.constants import classify_name
+
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DEFAULT_BASE = "https://agentchat-d0gsw7sn6c36f0b00.service.tcloudbase.com/api/etf-strength"
@@ -78,7 +80,7 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
         rows.append({
             "code": code,
             "name": name_map.get(code, code),
-            "category": cat_map.get(code, "其他"),
+            "category": (cat_map.get(code) if cat_map.get(code) else classify_name(name_map.get(code, code))) or "其他",
             "strength_label": r.get("strength_label", "横盘震荡"),
             "fund_size_yi": fund_size_map.get(code, 0) or 0,
             "latest_close": r.get("latest_close", 0),
