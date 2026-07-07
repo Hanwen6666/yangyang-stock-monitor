@@ -20,6 +20,8 @@ def slope_window(close, n):
     """年化斜率:(exp(log(c[-1]/c[0]) * 250/n) - 1) * 100"""
     if len(close) < n: return None
     c = close[-n:]
+    if c[0] == 0:
+        return None
     cum_log = math.log(c[-1] / c[0])
     return (math.exp(cum_log * 250 / n) - 1) * 100
 
@@ -44,7 +46,6 @@ def adx_calc(close, high, low, n=14):
     minus_di = 100 * minus_dm.rolling(n, min_periods=1).mean() / atr_n.replace(0, np.nan)
     dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
     return dx.rolling(n, min_periods=1).mean().fillna(0).iloc[-1]
-
 def classify_one(slope, slope_20, sc, adx_, up60):
     """6 档分类(v27 阈值)
 
@@ -191,6 +192,7 @@ def _compute_sliding_labels(close, high, low, n_windows=25):
             # 直接内联再算
             _s50 = slope_window(_c, 50) or 0
             _s20 = slope_window(_c, 20) or 0
+            # 注意: s120未被_classify_one使用,不计算
             _sh20 = rolling_sharpe(_c, 20)
             _sh50 = rolling_sharpe(_c, 50)
             _sh120 = rolling_sharpe(_c, 120)
@@ -214,10 +216,9 @@ def _compute_sliding_labels(close, high, low, n_windows=25):
             labels.append('横盘震荡')
             continue
 
-        # slope_window(close, 20/50/120)
+        # slope_window(close, 20/50)
         s50 = slope_window(c, 50) or 0
         s20 = slope_window(c, 20) or 0
-        s120 = slope_window(c, 120) or 0
 
         # rolling_sharpe(close, 20/50/120)
         sh20 = _sharpe_in_window(c, 20)
