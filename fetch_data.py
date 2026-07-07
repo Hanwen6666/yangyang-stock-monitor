@@ -75,7 +75,7 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
             "code": code,
             "name": name_map.get(code, code),
             "category": cat_map.get(code, "其他"),
-            "strength_label": r["strength_label"],
+            "strength_label": r.get("strength_label", "横盘震荡"),
             "fund_size_yi": fund_size_map.get(code, 0),
             "latest_close": r.get("latest_close", 0),
             "latest_volume": r.get("latest_volume", 0),
