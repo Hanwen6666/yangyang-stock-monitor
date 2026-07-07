@@ -448,29 +448,6 @@ def _fmt_vol(v):
     return f"{int(v)}"
 
 
-def _quote_row_html(code, name, price, change_pct, direction):
-    """东财风格实时行情条"""
-    color = ACCENT_UP if direction == "up" else ACCENT_DN
-    sign = "+" if direction == "up" else ""
-    return f"""
-    <div style="display:flex;align-items:baseline;gap:12px;
-                background:{BG_PANEL};border:1px solid {BORDER};
-                border-radius:8px;padding:10px 16px;margin-bottom:8px;">
-      <div>
-        <span style="color:{TEXT};font-size:16px;font-weight:700;
-                     font-family:monospace;">{code}</span>
-        <span style="color:{TEXT_MUTED};font-size:13px;margin-left:8px;">{name}</span>
-      </div>
-      <div style="margin-left:auto;display:flex;align-items:baseline;gap:12px;">
-        <span style="color:{TEXT};font-size:22px;font-weight:700;
-                     font-family:monospace;">{price}</span>
-        <span style="color:{color};font-size:14px;font-weight:600;
-                     font-family:monospace;">{sign}{change_pct:.2f}%</span>
-      </div>
-    </div>
-    """
-
-
 def _kline_chart_html(kw_250):
     """东财风格 K 线图:主流+成交量副图(底部色柱)"""
     close = kw_250["close"].astype(float).values
