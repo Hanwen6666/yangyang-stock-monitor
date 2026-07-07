@@ -10,11 +10,13 @@ ETF 强弱趋势分析 Tab
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.express as px
 from pathlib import Path
 
-# 复用 app.py 的主题/工具
+# 复用 app.py 的主题/工具 + algorithm
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from lib import algorithm as algo
 
 
 # 主题色(与 app.py 同步)
@@ -434,17 +436,155 @@ def render_kpi(df: pd.DataFrame):
             ), unsafe_allow_html=True)
 
 
+def render_stock_detail(df_res: pd.DataFrame):
+    """个股 ETF 分析子视图:输入代码 → K 线 + 趋势指标"""
+    st.markdown(f'<div style="margin-bottom:8px;"></div>', unsafe_allow_html=True)
+
+    # 输入框 + 按钮
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        code_input = st.text_input(
+            "", "", placeholder="输入 ETF 代码 (如 159845)",
+            label_visibility="collapsed",
+        )
+    with c2:
+        go_btn = st.button("🔍 分析", use_container_width=True, type="primary")
+
+    if not code_input or not go_btn:
+        st.markdown(
+            f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
+            f'padding:32px 0;border:1px dashed {BORDER};border-radius:8px;">'
+            f'输入 ETF 代码后点击分析</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    code = code_input.strip().zfill(6)
+
+    with st.spinner(f"正在获取 {code} 的 K 线数据..."):
+        kline = algo.fetch_kline(code, min_len=100)
+
+    if kline is None or len(kline) < 100:
+        st.error(f"无法获取 {code} 的 K 线数据,请检查代码或稍后重试")
+        return
+
+    kw = kline.dropna(subset=["close"]).reset_index(drop=True)
+    # 取最新 250 天用于计算
+    kw_250 = kw.iloc[-250:].reset_index(drop=True) if len(kw) >= 250 else kw.copy()
+
+    # 计算指标
+    m = algo.calc_single_etf(kw)
+
+    close = kw_250["close"].astype(float).values
+    dates = pd.to_datetime(kw_250["date"])
+
+    # ---- K 线(蜡烛图) ----
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=dates,
+        open=kw_250["open"].astype(float),
+        high=kw_250["high"].astype(float),
+        low=kw_250["low"].astype(float),
+        close=close,
+        name="K线",
+        increasing_line_color="#ff4d4f",
+        decreasing_line_color="#00d4aa",
+    ))
+    # 均线
+    for n, color in [(20, "#4a90d9"), (50, "#ff7800"), (120, "#ffcc00")]:
+        if len(close) >= n:
+            ma = pd.Series(close).rolling(n).mean()
+            fig.add_trace(go.Scatter(
+                x=dates, y=ma, mode="lines",
+                name=f"MA{n}", line=dict(color=color, width=1),
+            ))
+    fig.update_layout(
+        template="plotly_dark",
+        margin=dict(l=0, r=0, t=4, b=0),
+        height=400,
+        xaxis_rangeslider_visible=False,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=TEXT, size=10),
+        xaxis=dict(gridcolor=BORDER, gridwidth=0.5),
+        yaxis=dict(gridcolor=BORDER, gridwidth=0.5),
+        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=9)),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    # ---- 指标卡片 ----
+    if m:
+        name = kw.iloc[-1].get("name", "") if "name" in kw.columns else ""
+        latest_price = close[-1]
+        latest_vol = kw_250["volume"].astype(float).values[-1] if "volume" in kw_250.columns else 0
+
+        # 从 df_res 拿分类和规模
+        res_row = df_res[df_res["code"].astype(str).str.zfill(6) == code]
+        category = res_row["category"].iloc[0] if len(res_row) > 0 else "—"
+        fund_size = res_row["fund_size_yi"].iloc[0] if len(res_row) > 0 else 0
+
+        st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
+
+        cols = st.columns(7, gap="small")
+        metrics = [
+            ("最新价", f"{latest_price:.3f}", "", TEXT),
+            ("分类", category, "", TEXT_MUTED),
+            ("规模(亿)", f"{fund_size:.1f}", "", TEXT),
+            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] else "—", "", ACCENT_UP if (m['slope_50'] or 0) > 0 else TEXT),
+            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] else "—", "", ACCENT_UP if (m['slope_20'] or 0) > 0 else TEXT),
+            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] else "—", "", ACCENT_UP if (m['slope_120'] or 0) > 0 else TEXT),
+        ]
+        for i, (title, value, sub, color) in enumerate(metrics):
+            with cols[i]:
+                st.markdown(kpi_card(title, value, sub, color), unsafe_allow_html=True)
+
+        st.markdown(f'<div style="height:4px"></div>', unsafe_allow_html=True)
+
+        cols2 = st.columns(4, gap="small")
+        metrics2 = [
+            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] else "—", "", TEXT),
+            ("ADX", f"{m['adx']:.2f}" if m['adx'] else "—", "", TEXT),
+            ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] else "—", "", TEXT),
+            ("当前趋势", m['strength_label'], "", LABEL_COLORS.get(m['strength_label'], (TEXT, "#fff"))[0]),
+        ]
+        for i, (title, value, sub, color) in enumerate(metrics2):
+            with cols2[i]:
+                st.markdown(kpi_card(title, value, sub, color), unsafe_allow_html=True)
+
+        # ---- 成交量柱状图(缩略) ----
+        vol = kw_250["volume"].astype(float).values
+        fig2 = go.Figure()
+        colors = ["#ff4d4f" if c >= close[i-1] else "#00d4aa" for i, c in enumerate(close)]
+        fig2.add_trace(go.Bar(x=dates, y=vol, name="成交量", marker_color=colors, opacity=0.5))
+        fig2.update_layout(
+            template="plotly_dark",
+            margin=dict(l=0, r=0, t=4, b=0),
+            height=120,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color=TEXT, size=10),
+            xaxis=dict(gridcolor=BORDER, gridwidth=0.5, visible=False),
+            yaxis=dict(gridcolor=BORDER, gridwidth=0.5),
+            showlegend=False,
+        )
+        st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
+    else:
+        st.warning("K 线数据不足,无法计算指标")
+
+
+
 def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     """ETF 强弱趋势 Tab 入口(被 tabs/__init__.py 调用)
 
-    当前结构: 1 个 ETF 强弱 Tab + 内部 KPI + 2 个子视图
-    后续如果要把这两个子视图升级成独立顶层 Tab,改这里即可
+    当前结构: 1 个 ETF 强弱 Tab + 内部 KPI + 7 个子视图
+    后续如果要把这些子视图升级成独立顶层 Tab,改这里即可
     """
     # KPI 只在 ETF Tab 内显示(其他 Tab 不要标的池/趋势分布这些 ETF 专用指标)
     render_kpi(df_res)
-    st.markdown(f'<div style="height:16px"></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
 
-    # 6 个趋势分类子 Tab + 趋势演变
+    # 6 个趋势分类子 Tab + 趋势演变 + 个股分析
     icons = {
         "超强势":   "🟥",
         "强势":     "🟧",
@@ -454,7 +594,11 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         "一直下跌": "🟫",
     }
     short_tab_labels = ["超强势", "强势", "震荡上涨", "横盘震荡", "震荡下跌", "一直下跌"]
-    labels = [f"{icons.get(l, '')} {s}" for l, s in zip(LABEL_ORDER, short_tab_labels)] + ["🔥 趋势演变"]
+    labels = (
+        [f"{icons.get(l, '')}{s}" for l, s in zip(LABEL_ORDER, short_tab_labels)]
+        + ["🔥 趋势演变"]
+        + ["📈 个股分析"]
+    )
     sub_tabs = st.tabs(labels)
     # 内层子 Tab 紧凑样式(用更渐进的选择器避免覆盖顶层 Tab)
     st.markdown(f"""
@@ -472,5 +616,7 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     for i, label in enumerate(LABEL_ORDER):
         with sub_tabs[i]:
             render_list_view(df_res, label_filter=label)
-    with sub_tabs[-1]:
+    with sub_tabs[-2]:
         render_history_table(df_hist, df_res)
+    with sub_tabs[-1]:
+        render_stock_detail(df_res)
