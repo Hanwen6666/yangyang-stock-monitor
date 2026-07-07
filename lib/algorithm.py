@@ -119,14 +119,33 @@ def _parse_tencent_klines(code_tx):
 
 
 def _parse_akshare(code_sina):
-    """akshare 新浪源:返回 DataFrame 或 None"""
+    """akshare 多接口试:新浪→东财(被限速时的fallback),返回 DataFrame 或 None"""
+    code6 = code_sina[-6:] if len(code_sina) >= 6 else code_sina
     try:
         import akshare as ak
-        k = ak.fund_etf_hist_sina(symbol=code_sina)
+        # 1) 先试新浪
+        k = ak.fund_etf_hist_sina(symbol=code6)
         if k is not None and len(k) > 100:
             rename = {"日期": "date", "开盘": "open", "收盘": "close",
                       "最高": "high", "最低": "low", "成交量": "volume"}
             return k.rename(columns=rename)
+    except Exception:
+        pass
+    try:
+        import akshare as ak
+        # 2) 新浪失败,试东方财富(含成交额)
+        k = ak.fund_etf_hist_em(symbol=code6, period="daily",
+                                 start_date="20190101", end_date="20300101",
+                                 adjust="qfq")
+        if k is not None and len(k) > 100:
+            rename = {"日期": "date", "开盘": "open", "收盘": "close",
+                      "最高": "high", "最低": "low", "成交量": "volume",
+                      "成交额": "amount"}
+            df = k.rename(columns=rename)
+            for c in ['open','close','high','low','volume','amount']:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors='coerce')
+            return df[['date','open','close','high','low','volume','amount']]
     except Exception:
         pass
     return None
