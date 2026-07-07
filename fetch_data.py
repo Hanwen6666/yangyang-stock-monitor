@@ -86,7 +86,6 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
             "latest_close": r.get("latest_close", 0),
             "latest_volume": r.get("latest_volume", 0),
             "latest_amount": r.get("latest_amount", 0),
-            "latest_amount": r.get("latest_amount", 0),
             "slope_20": r["slope_20"],
             "slope_50": r["slope_50"],
             "slope_120": r["slope_120"],

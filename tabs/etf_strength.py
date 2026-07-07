@@ -54,7 +54,7 @@ def render_table(df: pd.DataFrame):
 
     cols_order = [
         "code", "name", "strength_label", "category",
-        "latest_close", "latest_volume",
+        "latest_close", "latest_amount",
         "fund_size_yi",
     ]
     show = df[[c for c in cols_order if c in df.columns]].copy()

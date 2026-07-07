@@ -12,6 +12,11 @@ import numpy as np
 import pandas as pd
 import requests
 
+try:
+    import akshare
+except ImportError:
+    pass
+
 
 # ============================================================
 # 核心算法(从 v27 移植,1:1)
@@ -122,9 +127,8 @@ def _parse_akshare(code_sina):
     """akshare 多接口试:新浪→东财(被限速时的fallback),返回 DataFrame 或 None"""
     code6 = code_sina[-6:] if len(code_sina) >= 6 else code_sina
     try:
-        import akshare as ak
         # 1) 先试新浪
-        k = ak.fund_etf_hist_sina(symbol=code6)
+        k = akshare.fund_etf_hist_sina(symbol=code6)
         if k is not None and len(k) > 100:
             rename = {"日期": "date", "开盘": "open", "收盘": "close",
                       "最高": "high", "最低": "low", "成交量": "volume"}
@@ -132,9 +136,8 @@ def _parse_akshare(code_sina):
     except Exception:
         pass
     try:
-        import akshare as ak
         # 2) 新浪失败,试东方财富(含成交额)
-        k = ak.fund_etf_hist_em(symbol=code6, period="daily",
+        k = akshare.fund_etf_hist_em(symbol=code6, period="daily",
                                  start_date="20190101", end_date="20300101",
                                  adjust="qfq")
         if k is not None and len(k) > 100:
@@ -287,12 +290,8 @@ def fetch_kline(code6, min_len=250):
     # 快速失败:腾讯不够长,继续拉全源
     results = [first]
 
-    # 源2: akshare (本地有则用, Streamlit Cloud 无此依赖)
-    try:
-        import akshare
-        results.append(_parse_akshare(code_sina))
-    except ImportError:
-        results.append(None)
+    # 源2: akshare (已模块级导入)
+    results.append(_parse_akshare(code_sina))
 
     # 源3: 163 CSV API (不依赖第三方库)
     try:
