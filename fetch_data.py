@@ -37,16 +37,14 @@ def write_csv(path, rows, fieldnames):
             w.writerow(r)
 
 
-def _build_results_csv_from_metrics(metrics_df, asof_date):
-    """把算法输出转成 results.csv 格式"""
-    # 合并 category/name/fund_size
-    pool_path = DATA_DIR / "etf_pool.csv"
-    cat_path = DATA_DIR / "industry_category.csv"
+def _load_pool_meta():
+    """加载 ETF 池元数据(name_map, fund_size_map, cat_map),模块级缓存"""
     name_map = {}
     fund_size_map = {}
     cat_map = {}
+    pool_path = DATA_DIR / "etf_pool.csv"
+    cat_path = DATA_DIR / "industry_category.csv"
     try:
-        # 优先从 industry_category.csv 读真实行业分类（字段名 行业分类）
         if cat_path.exists():
             cat_df = pd.read_csv(cat_path, dtype={"代码": str})
             cat_map = dict(zip(cat_df["代码"], cat_df["行业分类"]))
@@ -57,12 +55,17 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
             pool = pd.read_csv(pool_path, dtype={"代码": str})
             name_map = dict(zip(pool["代码"], pool["名称"]))
             fund_size_map = dict(zip(pool["代码"].astype(str), pool["fund_size_yi"].astype(float)))
-            # 如果 cat_map 为空,从 etf_pool 兜底
             if not cat_map:
                 cat_col = next((c for c in ["theme", "cluster", "category"] if c in pool.columns), None)
                 cat_map = dict(zip(pool["代码"], pool[cat_col].astype(str) if cat_col else "其他"))
     except Exception:
         pass
+    return name_map, fund_size_map, cat_map
+
+
+def _build_results_csv_from_metrics(metrics_df, asof_date):
+    """把算法输出转成 results.csv 格式"""
+    name_map, fund_size_map, cat_map = _load_pool_meta()
 
     cols = ["code", "name", "category", "strength_label", "fund_size_yi",
             "latest_close", "latest_volume",
@@ -178,11 +181,9 @@ def recompute_locally(codes=None, progress_cb=None):
             if pool_path.exists():
                 pool = pd.read_csv(pool_path, dtype={"代码": str})
                 codes = pool["代码"].tolist()
-                name_map = dict(zip(pool["代码"], pool["名称"]))
             else:
-                codes = []; name_map = {}
-        else:
-            name_map = {}
+                codes = []
+        name_map, _, _ = _load_pool_meta()
 
         total = len(codes)
         print(f"[recompute] {total} 只 ETF,启动 v27...")

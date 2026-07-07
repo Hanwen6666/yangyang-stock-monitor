@@ -7,6 +7,7 @@ ETF 强弱趋势算法 v27 — 从理财助理生产代码移植
 """
 import math
 import io
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import requests
@@ -45,7 +46,22 @@ def adx_calc(close, high, low, n=14):
     return dx.rolling(n, min_periods=1).mean().fillna(0).iloc[-1]
 
 def classify_one(slope, slope_20, sc, adx_, up60):
-    """6 档分类(v27 阈值)"""
+    """6 档分类(v27 阈值)
+
+    参数说明:
+        slope: 主窗口年化斜率(slope_50, 基准)
+        slope_20: 20日年化斜率(短趋势检测)
+        sc: 综合夏普(0.2*sh20 + 0.5*sh50 + 0.3*sh120)
+        adx_: ADX 趋势强度(>25强趋势, <20弱趋势)
+        up60: 60日上涨比例
+
+    阈值含义(v27 经验调优):
+        - 超强势: slope>55(sc>2.0) + adx>28(趋势强劲) + 短斜不下跌
+        - 横盘震荡: adx<12(无趋势) + |sc|<0.5(无倾向)
+        - 一直下跌: slope<-12(持续下行) + sc<-0.8(负回报稳定)
+        - 强势/震荡上涨: slope>10(上行趋势), 强弱由斜率+夏普细分
+        - 震荡下跌: slope<-5(下行趋势) + sc<-0.5
+    """
     if (slope > 55 and slope_20 > -10 and slope_20 > slope * 0.3
             and sc > 2.0 and adx_ > 28 and up60 > 0.62):
         return "超强势"
@@ -67,18 +83,6 @@ def classify_one(slope, slope_20, sc, adx_, up60):
 # ============================================================
 # K 线拉取 — 多源交叉验证
 # ============================================================
-
-_KLINER_SOURCES = {
-    "sina": {
-        "url": "https://vip.stock.finance.sina.com.cn/corp/go.php/vMS_MarketHistory/stock/{code}.html",
-        "parser": None,  # 通过 akshare 实现
-    },
-    "tencent": {
-        "url": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
-        "params": lambda c: {'param': f"{c},day,,,640,qfq"},
-    },
-}
-
 
 def _parse_tencent_klines(code_tx):
     """腾讯源:返回 DataFrame 或 None"""
@@ -169,7 +173,6 @@ def fetch_kline(code6, min_len=250):
                 })
                 df_sina['date'] = df_sina['date'].astype(str).str.replace('-', '')
                 # 转标准格式 yyyy-mm-dd
-                from datetime import datetime
                 df_sina['date'] = df_sina['date'].apply(
                     lambda x: f"{x[:4]}-{x[4:6]}-{x[6:8]}" if len(x)==8 else x
                 )
