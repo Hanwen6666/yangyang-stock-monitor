@@ -658,6 +658,9 @@ def render_stock_detail(df_res: pd.DataFrame):
     if m:
         st.markdown(f'<div style="height:2px"></div>', unsafe_allow_html=True)
 
+        def _slope_color(v):
+            return ACCENT_UP if (v or 0) > 0 else ACCENT_DN
+
         metrics = [
             ("最新价", f"{latest_price:.3f}", TEXT),
             ("涨跌幅", f"{change_pct:+.2f}%", ACCENT_UP if direction == "up" else ACCENT_DN),
@@ -665,15 +668,12 @@ def render_stock_detail(df_res: pd.DataFrame):
             ("分类", category, TEXT_MUTED),
             ("规模", f"{fund_size:.1f}亿", TEXT),
             ("趋势", m["strength_label"], LABEL_COLORS.get(m["strength_label"], (TEXT, "#fff"))[0]),
-            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] else "—",
-             ACCENT_UP if (m.get('slope_20') or 0) > 0 else ACCENT_DN),
-            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] else "—",
-             ACCENT_UP if (m.get('slope_50') or 0) > 0 else ACCENT_DN),
-            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] else "—",
-             ACCENT_UP if (m.get('slope_120') or 0) > 0 else ACCENT_DN),
-            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] else "—", TEXT),
+            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] is not None else "—", _slope_color(m.get('slope_20'))),
+            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] is not None else "—", _slope_color(m.get('slope_50'))),
+            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] is not None else "—", _slope_color(m.get('slope_120'))),
+            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] is not None else "—", TEXT),
             ("ADX", f"{m['adx']:.2f}" if m['adx'] else "—", TEXT),
-            ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] else "—", TEXT),
+            ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] is not None else "—", TEXT),
         ]
         st.markdown(_metric_row_html(metrics), unsafe_allow_html=True)
 
