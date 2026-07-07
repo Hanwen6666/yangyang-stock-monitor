@@ -177,15 +177,47 @@ def _compute_sliding_labels(close, high, low, n_windows=25):
     dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
     adx_arr = dx.rolling(n_adx, min_periods=1).mean().fillna(0).values
 
+    n_total = len(close)
+    if n_total < 250:
+        # K 线不足 250 天:退回串行 calc_single_etf 处理
+        _k = pd.DataFrame({'close': close, 'high': high, 'low': low})
+        labels = []
+        for offset in range(n_windows):
+            end_idx = n_total - 1 - offset
+            chunk = _k.iloc[max(0, end_idx - 249):end_idx + 1].reset_index(drop=True)
+            _c = chunk['close'].astype(float).values
+            _h = chunk['high'].astype(float).values if 'high' in chunk.columns else _c
+            _l = chunk['low'].astype(float).values if 'low' in chunk.columns else _c
+            # 直接内联再算
+            _s50 = slope_window(_c, 50) or 0
+            _s20 = slope_window(_c, 20) or 0
+            _sh20 = rolling_sharpe(_c, 20)
+            _sh50 = rolling_sharpe(_c, 50)
+            _sh120 = rolling_sharpe(_c, 120)
+            _sc = None
+            if all(x is not None for x in [_sh20, _sh50, _sh120]):
+                _sc = 0.2 * _sh20 + 0.5 * _sh50 + 0.3 * _sh120
+            _a = adx_calc(_c, _h, _l)
+            _rets = np.diff(_c) / _c[:-1]
+            _up60 = (_rets[-60:] > 0).sum() / 60 if len(_rets) >= 60 else 0
+            _lbl = classify_one(_s50, _s20, _sc or 0, _a, _up60)
+            labels.append(_lbl)
+        labels.reverse()
+        return labels
+
     labels = []
     for offset in range(n_windows):
-        end = len(close) - offset
-        c = close[end - 250:end]
+        end = n_total - offset
+        start = max(0, end - 250)
+        c = close[start:end]
+        if len(c) < 20:
+            labels.append('横盘震荡')
+            continue
 
         # slope_window(close, 20/50/120)
-        s50 = (math.exp(math.log(c[-50:][-1]/c[-50:][0])*250/50)-1)*100
-        s20 = (math.exp(math.log(c[-20:][-1]/c[-20:][0])*250/20)-1)*100
-        s120 = (math.exp(math.log(c[-120:][-1]/c[-120:][0])*250/120)-1)*100
+        s50 = slope_window(c, 50) or 0
+        s20 = slope_window(c, 20) or 0
+        s120 = slope_window(c, 120) or 0
 
         # rolling_sharpe(close, 20/50/120)
         sh20 = _sharpe_in_window(c, 20)
@@ -200,8 +232,8 @@ def _compute_sliding_labels(close, high, low, n_windows=25):
         rets = np.diff(c[-61:]) / c[-61:-1]
         up60 = (rets[-60:] > 0).sum() / 60 if len(rets) >= 60 else 0
 
-        # ADX (取窗口最后一天)
-        adx_val = adx_arr[end - 1]
+        # ADX (取窗口最后一天,保护防止越界)
+        adx_val = adx_arr[min(end - 1, len(adx_arr) - 1)]
 
         label = classify_one(s50, s20, sc or 0, adx_val, up60)
         labels.append(label)
@@ -230,7 +262,8 @@ def fetch_kline(code6, min_len=250):
         results.append(None)
     # 源3: 163 CSV API (不依赖第三方库)
     try:
-        url = f"https://quotes.money.163.com/service/chddata.html?code={code_sina}&start=20200101&end=20300101"
+        _163_prefix = "0" if int(code6) < 500000 else "1"
+        url = "https://quotes.money.163.com/service/chddata.html?code=" + _163_prefix + code6 + "&start=20200101&end=20300101"
         r = requests.get(url, timeout=10,
                           headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code == 200 and len(r.text) > 1000:

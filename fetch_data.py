@@ -275,7 +275,14 @@ def recompute_locally(codes=None, progress_cb=None):
             if progress_cb:
                 progress_cb(done, total, code, m, "ok")
 
-        asof = datetime.now().strftime("%Y%m%d")
+        # asof 用 K 线最后日期而非执行时刻:从第一只(最完整)K线取
+        asof = datetime.now().strftime("%Y%m%d")  # fallback
+        if kline_cache:
+            _first_k = list(kline_cache.values())[0]
+            _last_date = _first_k["date"].iloc[-1]
+            _ds = str(_last_date).replace("-", "").replace("/", "")[:8]
+            if _ds.isdigit():
+                asof = _ds
         metrics_df = pd.DataFrame(metrics_rows)
         rows, cols = _build_results_csv_from_metrics(metrics_df, asof)
         write_csv(DATA_DIR / "results.csv", rows, cols)
