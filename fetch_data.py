@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -192,20 +193,26 @@ def recompute_locally(codes=None, progress_cb=None):
 
         # 预拉所有 K 线(避免重复网络 I/O)
         kline_cache = {}
-        for i, code in enumerate(codes):
-            kw = algo.fetch_kline(code, min_len=250)
-            # algo.fetch_kline 内部已有三源交叉验证(Sina+Tencent+163),无需单独降级
-            if kw is not None and len(kw) >= 100:
-                kw = kw.dropna(subset=["close"]).reset_index(drop=True)
-                # 新 ETF(<250 天):前向 pad 到 250
-                if len(kw) < 250:
-                    pad_needed = 250 - len(kw)
-                    first_row = kw.iloc[:1].copy()
-                    pads = pd.concat([first_row] * pad_needed, ignore_index=True)
-                    kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
-                kline_cache[code] = kw
-            if progress_cb:
-                progress_cb(i + 1, total, code, None, "kline")
+        # 并行拉 K 线(IO 密集,多线程加速)
+        fetched = {}
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            fut_map = {pool.submit(algo.fetch_kline, code, 250): code for code in codes}
+            for i, fut in enumerate(as_completed(fut_map)):
+                code = fut_map[fut]
+                try:
+                    kw = fut.result()
+                except Exception:
+                    kw = None
+                if kw is not None and len(kw) >= 100:
+                    kw = kw.dropna(subset=["close"]).reset_index(drop=True)
+                    if len(kw) < 250:
+                        pad_needed = 250 - len(kw)
+                        first_row = kw.iloc[:1].copy()
+                        pads = pd.concat([first_row] * pad_needed, ignore_index=True)
+                        kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
+                    kline_cache[code] = kw
+                if progress_cb:
+                    progress_cb(i + 1, total, code, None, "kline")
 
         print(f"K 线缓存: {len(kline_cache)}/{total} 只")
 

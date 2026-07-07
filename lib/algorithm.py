@@ -33,19 +33,28 @@ def rolling_sharpe(close, n):
     return (rets.mean() * 252) / (rets.std() * math.sqrt(252))
 
 def adx_calc(close, high, low, n=14):
-    """ADX(标准版)"""
+    """ADX(标准版) — numpy 加速版"""
     if len(close) < n + 1: return 0.0
-    s = pd.Series(close); h = pd.Series(high); l = pd.Series(low)
-    up = h.diff(); dn = -l.diff()
-    plus_dm = ((up > dn) & (up > 0)) * up
-    minus_dm = ((dn > up) & (dn > 0)) * dn
-    pc = s.shift(1)
-    tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
-    atr_n = tr.rolling(n, min_periods=1).mean()
-    plus_di = 100 * plus_dm.rolling(n, min_periods=1).mean() / atr_n.replace(0, np.nan)
-    minus_di = 100 * minus_dm.rolling(n, min_periods=1).mean() / atr_n.replace(0, np.nan)
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-    return dx.rolling(n, min_periods=1).mean().fillna(0).iloc[-1]
+    up = np.diff(high)
+    up = np.insert(up, 0, 0)
+    dn = -np.diff(low)
+    dn = np.insert(dn, 0, 0)
+    cond = (up > dn) & (up > 0)
+    plus_dm = cond * up
+    cond2 = (dn > up) & (dn > 0)
+    minus_dm = cond2 * dn
+    pc = np.roll(close, 1)
+    pc[0] = close[0]
+    tr = np.maximum(np.maximum(high - low, np.abs(high - pc)), np.abs(low - pc))
+    atr_arr = pd.Series(tr).rolling(n, min_periods=1).mean().values
+    pdm_arr = pd.Series(plus_dm).rolling(n, min_periods=1).mean().values
+    mdm_arr = pd.Series(minus_dm).rolling(n, min_periods=1).mean().values
+    atr_denom = np.where(atr_arr == 0, np.nan, atr_arr)
+    plus_di = 100 * pdm_arr / atr_denom
+    minus_di = 100 * mdm_arr / atr_denom
+    sum_di = plus_di + minus_di
+    dx_vals = np.divide(100 * np.abs(plus_di - minus_di), sum_di, out=np.full_like(sum_di, 0), where=sum_di != 0)
+    return pd.Series(dx_vals).rolling(n, min_periods=1).mean().fillna(0).iloc[-1]
 def classify_one(slope, slope_20, sc, adx_, up60):
     """6 档分类(v27 阈值)
 
@@ -244,23 +253,28 @@ def _compute_sliding_labels(close, high, low, n_windows=25):
 
 
 def fetch_kline(code6, min_len=250):
-    """多源拉 K 线: 腾讯(https) + akshare(可用时) + 163(备)
+    """多源拉 K 线: 腾讯优先(最快), 失败才走 akshare+163 交叉验证
 
-    腾讯源使用 https 避免 HTTP 明文请求。
-    三源交叉验证选最优结果。akshare 不可用时自动跳过(避免每次~3s timeout)。
+    优化:腾讯源在 Streamlit Cloud 上约 150ms,三源全拉 650ms+
+    因此先快速试腾讯,够长直接返回;不够/失败才降级全源
     """
     code_sina = ('sh' if code6.startswith('5') or code6.startswith('1') else 'sz') + code6
-    code_tx = code_sina
 
-    results = []
-    # 源1: 腾讯 https (最快且稳定)
-    results.append(_parse_tencent_klines(code_tx))
+    # 源1: 腾讯 https (最快且稳定) — 优先快速尝试
+    first = _parse_tencent_klines(code_sina)
+    if first is not None and len(first) >= min_len:
+        return first
+
+    # 快速失败:腾讯不够长,继续拉全源
+    results = [first]
+
     # 源2: akshare (本地有则用, Streamlit Cloud 无此依赖)
     try:
         import akshare
         results.append(_parse_akshare(code_sina))
     except ImportError:
         results.append(None)
+
     # 源3: 163 CSV API (不依赖第三方库)
     try:
         _163_prefix = "0" if code6 and code6[0] in "036" else "1"
@@ -287,7 +301,6 @@ def fetch_kline(code6, min_len=250):
     best = _cross_validate(results)
     if best is not None and len(best) > min_len:
         return best
-    # 降级:min_len 不够但仍有数据
     if best is not None and len(best) >= 100:
         return best
     return None
