@@ -422,8 +422,10 @@ def _fmt_vol(v):
 
 
 def _slope_color_fn(v):
-    """斜率颜色:正=红色,负=绿色"""
-    return ACCENT_UP if (v or 0) > 0 else ACCENT_DN
+    """斜率颜色:正=红色,负=绿色,空=灰色"""
+    if v is None:
+        return TEXT_MUTED
+    return ACCENT_UP if v > 0 else ACCENT_DN
 
 
 def _kline_chart_html(kw_250):
