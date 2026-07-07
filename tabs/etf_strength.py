@@ -69,46 +69,43 @@ def render_table(df: pd.DataFrame):
 
     cols_order = [
         "code", "name", "strength_label", "category",
-        "slope_50", "slope_20", "slope_120",
-        "sharpe_composite", "adx", "up_ratio_60",
-        "fund_size_yi", "n_points",
+        "latest_close", "latest_volume",
+        "fund_size_yi",
     ]
     show = df[[c for c in cols_order if c in df.columns]].copy()
     show = show.rename(columns={
         "code": "代码", "name": "名称", "strength_label": "趋势",
-        "category": "分类", "slope_50": "50日斜率",
-        "slope_20": "20日斜率", "slope_120": "120日斜率",
-        "sharpe_composite": "夏普", "adx": "ADX",
-        "up_ratio_60": "60日↑%", "fund_size_yi": "规模(亿)",
-        "n_points": "样本",
+        "category": "分类",
+        "latest_close": "最新价", "latest_volume": "成交量",
+        "fund_size_yi": "规模(亿)",
     })
     show["趋势"] = show["趋势"].apply(label_badge_html)
 
-    # 数字格式化:千分位 + 智能精度
-    def fmt_int(v):
-        if pd.isna(v): return "—"
-        return f"{int(v):,}"
+    # 格式化
+    def fmt_price(v):
+        if pd.isna(v) or float(v) == 0: return "—"
+        return f"{float(v):.3f}"
 
-    def fmt_num(v, d=2):
-        if pd.isna(v): return "—"
-        return f"{v:,.{d}f}"
+    def fmt_vol(v):
+        if pd.isna(v) or float(v) == 0: return "—"
+        vol = float(v)
+        if vol >= 1e8:
+            return f"{vol/1e8:.1f}亿"
+        elif vol >= 1e4:
+            return f"{vol/1e4:.1f}万"
+        else:
+            return f"{int(vol)}"
 
     def fmt_yi(v):
         if pd.isna(v): return "—"
-        return f"{v:,.1f}"
-
-    def fmt_pct_val(v):
-        if pd.isna(v): return "—"
-        return f"{v*100:.1f}%"
+        return f"{float(v):.1f}"
 
     if "代码" in show.columns:
         show["代码"] = show["代码"].apply(lambda v: f"{int(v)}" if pd.notna(v) else "—")
-    for col, prec in [("50日斜率", 2), ("20日斜率", 2), ("120日斜率", 2),
-                       ("夏普", 3), ("ADX", 2), ("样本", 0)]:
-        if col in show.columns:
-            show[col] = show[col].apply(lambda v, p=prec: fmt_num(v, p))
-    if "60日↑%" in show.columns:
-        show["60日↑%"] = show["60日↑%"].apply(fmt_pct_val)
+    if "最新价" in show.columns:
+        show["最新价"] = show["最新价"].apply(fmt_price)
+    if "成交量" in show.columns:
+        show["成交量"] = show["成交量"].apply(fmt_vol)
     if "规模(亿)" in show.columns:
         show["规模(亿)"] = show["规模(亿)"].apply(fmt_yi)
 
@@ -140,19 +137,18 @@ def render_table(df: pd.DataFrame):
       .etf-table th {{
         background: {BG_PANEL_HI}; color: {TEXT_DIM};
         font-weight: 500; font-size: 9px;
-        text-align: left; padding: 6px 10px;
+        text-align: left; padding: 5px 8px;
         border-bottom: 1px solid {BORDER}; text-transform: uppercase;
         letter-spacing: 0.8px; white-space: nowrap;
         position: sticky; top: 0; z-index: 1;
       }}
       .etf-table td {{
-        padding: 6px 10px; border-bottom: 1px solid #151b2a;
+        padding: 5px 8px; border-bottom: 1px solid #151b2a;
         color: {TEXT}; white-space: nowrap; font-feature-settings: "tnum";
         font-size: 11px;
       }}
       .etf-table tr:hover td {{ background: {BG_PANEL_HI}; }}
       .etf-table tr:last-child td {{ border-bottom: none; }}
-      .etf-table td:nth-child(3) {{ white-space: normal; }}
     </style>
     """, unsafe_allow_html=True)
 

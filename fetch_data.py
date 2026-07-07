@@ -59,6 +59,7 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
         pass
 
     cols = ["code", "name", "category", "strength_label", "fund_size_yi",
+            "latest_close", "latest_volume",
             "slope_20", "slope_50", "slope_120", "sharpe_composite", "adx",
             "up_ratio_60", "n_changes", "n_points", "asof_date"]
     rows = []
@@ -70,6 +71,8 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
             "category": cat_map.get(code, "其他"),
             "strength_label": r["strength_label"],
             "fund_size_yi": fund_size_map.get(code, 0),
+            "latest_close": r.get("latest_close", 0),
+            "latest_volume": r.get("latest_volume", 0),
             "slope_20": r["slope_20"],
             "slope_50": r["slope_50"],
             "slope_120": r["slope_120"],
@@ -92,6 +95,7 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
         items = list_data.get("items", [])
         asof = list_data.get("asof_date", "")
         cols = ["code", "name", "category", "strength_label", "fund_size_yi",
+                "latest_close", "latest_volume",
                 "slope_20", "slope_50", "slope_120", "sharpe_composite", "adx",
                 "up_ratio_60", "n_changes", "n_points", "asof_date"]
         # API items 缺字段兜底
@@ -259,7 +263,13 @@ def recompute_locally(codes=None, progress_cb=None):
                 done += 1
                 continue
 
-            row = {"code": code, **m}
+            # 最新价 & 成交量
+            latest_close = close[-1] if len(close) > 0 else 0.0
+            latest_volume = kw["volume"].astype(float).values[-1] if "volume" in kw.columns and len(kw) > 0 else 0.0
+
+            row = {"code": code, **m,
+                   "latest_close": float(latest_close),
+                   "latest_volume": float(latest_volume)}
             metrics_rows.append(row)
 
             # 回看 25 天
