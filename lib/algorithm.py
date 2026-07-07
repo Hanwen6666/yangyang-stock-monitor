@@ -9,7 +9,7 @@ import math
 import numpy as np
 import pandas as pd
 import requests
-from typing import Optional
+
 
 # ============================================================
 # 核心算法(从 v27 移植,1:1)
@@ -99,6 +99,32 @@ def fetch_kline(code6, min_len=250):
     except Exception:
         pass
     return None
+
+
+def fetch_kline_tencent(code6):
+    """纯腾讯源拉 K 线(不依赖 akshare),供个股分析降级使用"""
+    code_tx = ('sh' if code6.startswith('5') or code6.startswith('1') else 'sz') + code6
+    try:
+        r = requests.get(
+            'http://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
+            params={'param': f'{code_tx},day,,,640,qfq'}, timeout=8,
+        )
+        if r.status_code == 200:
+            data = r.json().get('data', {})
+            if code_tx in data:
+                klines = data[code_tx].get('qfqday') or data[code_tx].get('day')
+                if klines:
+                    rows = [
+                        {'date': l[0], 'open': float(l[1]), 'close': float(l[2]),
+                         'high': float(l[3]), 'low': float(l[4]),
+                         'volume': float(l[5]) if len(l) > 5 else 0}
+                        for l in klines
+                    ]
+                    return pd.DataFrame(rows)
+    except Exception:
+        pass
+    return None
+
 
 # ============================================================
 # 单只 ETF 完整计算(v27 移植)

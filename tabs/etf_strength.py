@@ -298,21 +298,22 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
     """, unsafe_allow_html=True)
 
 
+SHORT_MAP = {
+    "超强势": "超强",
+    "强势": "强势",
+    "震荡上涨": "涨中",
+    "横盘震荡": "横盘",
+    "震荡下跌": "跌中",
+    "一直下跌": "下跌",
+}
+
+
 def _compact_cell_html(label: str) -> str:
     """紧凑色块:只显示缩略文字(2-3字),更小 padding,更紧凑"""
     if not label or pd.isna(label) or label == "":
         return '<span style="color:#54586b">—</span>'
     bg, fg = LABEL_COLORS.get(label, ("#3a4156", "#fff"))
-    # 缩略映射
-    short_map = {
-        "超强势": "超强",
-        "强势": "强势",
-        "震荡上涨": "涨中",
-        "横盘震荡": "横盘",
-        "震荡下跌": "跌中",
-        "一直下跌": "下跌",
-    }
-    short = short_map.get(label, label[:2])
+    short = SHORT_MAP.get(label, label[:2])
     return (
         f'<span style="'
         f'background:{bg};color:{fg};'
@@ -446,6 +447,11 @@ def _fmt_vol(v):
     elif v >= 1e4:
         return f"{v/1e4:.0f}万"
     return f"{int(v)}"
+
+
+def _slope_color_fn(v):
+    """斜率颜色:正=红色,负=绿色"""
+    return ACCENT_UP if (v or 0) > 0 else ACCENT_DN
 
 
 def _kline_chart_html(kw_250):
@@ -601,14 +607,27 @@ def render_stock_detail(df_res: pd.DataFrame):
     etf_name = selected.split(maxsplit=1)[-1] if len(selected.split()) > 1 else ""
 
     with st.spinner(f"获取 {code} {etf_name} K 线数据..."):
-        kline = algo.fetch_kline(code, min_len=100)
+        kline = algo.fetch_kline(code, min_len=250)
+
+        # 降级:如果新浪失败,尝试腾讯源手动拉(带更宽松的 min_len)
+        if kline is None or len(kline) < 120:
+            try:
+                kline = algo.fetch_kline_tencent(code)
+            except Exception:
+                pass
 
     if kline is None or len(kline) < 100:
         st.error(f"无法获取 {code} 的数据,请检查代码或稍后重试")
         return
 
     kw = kline.dropna(subset=["close"]).reset_index(drop=True)
-    kw_250 = kw.iloc[-250:].reset_index(drop=True) if len(kw) >= 250 else kw.copy()
+    if len(kw) < 250:
+        # 不足 250 日:前向填充到 250,让 calc_single_etf 能跑
+        first_row = kw.iloc[:1].copy()
+        pad_cnt = 250 - len(kw)
+        pads = pd.concat([first_row] * pad_cnt, ignore_index=True)
+        kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
+    kw_250 = kw.iloc[-250:].reset_index(drop=True)
     m = algo.calc_single_etf(kw)
     close = kw_250["close"].astype(float).values
     o = kw_250["open"].astype(float).values
@@ -635,9 +654,6 @@ def render_stock_detail(df_res: pd.DataFrame):
     if m:
         st.markdown(f'<div style="height:2px"></div>', unsafe_allow_html=True)
 
-        def _slope_color(v):
-            return ACCENT_UP if (v or 0) > 0 else ACCENT_DN
-
         metrics = [
             ("最新价", f"{latest_price:.3f}", TEXT),
             ("涨跌幅", f"{change_pct:+.2f}%", ACCENT_UP if direction == "up" else ACCENT_DN),
@@ -645,9 +661,12 @@ def render_stock_detail(df_res: pd.DataFrame):
             ("分类", category, TEXT_MUTED),
             ("规模", f"{fund_size:.1f}亿", TEXT),
             ("趋势", m["strength_label"], LABEL_COLORS.get(m["strength_label"], (TEXT, "#fff"))[0]),
-            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] is not None else "—", _slope_color(m.get('slope_20'))),
-            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] is not None else "—", _slope_color(m.get('slope_50'))),
-            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] is not None else "—", _slope_color(m.get('slope_120'))),
+            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] is not None else "—",
+             _slope_color_fn(m.get('slope_20'))),
+            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] is not None else "—",
+             _slope_color_fn(m.get('slope_50'))),
+            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] is not None else "—",
+             _slope_color_fn(m.get('slope_120'))),
             ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] is not None else "—", TEXT),
             ("ADX", f"{m['adx']:.2f}" if m['adx'] else "—", TEXT),
             ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] is not None else "—", TEXT),

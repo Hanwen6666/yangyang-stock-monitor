@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -46,15 +47,10 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
     try:
         if pool_path.exists():
             pool = pd.read_csv(pool_path, dtype={"代码": str})
-            # 分类列:有 theme 用 theme,有 cluster 用 cluster,都没有就"其他"
-            cat_col = None
-            for c in ["theme", "cluster", "category"]:
-                if c in pool.columns: cat_col = c; break
+            cat_col = next((c for c in ["theme", "cluster", "category"] if c in pool.columns), None)
             cat_map = dict(zip(pool["代码"], pool[cat_col].astype(str) if cat_col else "其他"))
             name_map = dict(zip(pool["代码"], pool["名称"]))
             fund_size_map = dict(zip(pool["代码"].astype(str), pool["fund_size_yi"].astype(float)))
-    except Exception:
-        pass
     except Exception:
         pass
 
