@@ -262,7 +262,7 @@ def fetch_kline(code6, min_len=250):
         results.append(None)
     # 源3: 163 CSV API (不依赖第三方库)
     try:
-        _163_prefix = "0" if int(code6) < 500000 else "1"
+        _163_prefix = "0" if code6 and code6[0] in "036" else "1"
         url = "https://quotes.money.163.com/service/chddata.html?code=" + _163_prefix + code6 + "&start=20200101&end=20300101"
         r = requests.get(url, timeout=10,
                           headers={"User-Agent": "Mozilla/5.0"})
@@ -315,11 +315,7 @@ def calc_single_etf(kline, win_key="slope_50"):
     low = k['low'].astype(float).values if 'low' in k.columns else close
 
     s20 = slope_window(close, 20)
-    s40 = slope_window(close, 40)
-    s45 = slope_window(close, 45)
     s50 = slope_window(close, 50)
-    s55 = slope_window(close, 55)
-    s60 = slope_window(close, 60)
     s120 = slope_window(close, 120)
 
     sh20 = rolling_sharpe(close, 20)

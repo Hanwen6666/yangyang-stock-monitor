@@ -171,8 +171,8 @@ def recompute_locally(codes=None, progress_cb=None):
     Returns: dict (同 refresh_data 格式)
     """
     import pandas as pd
-    sys.path.insert(0, str(Path(__file__).parent / "lib"))
-    import algorithm as algo
+    sys.path.insert(0, str(Path(__file__).parent))
+    from lib import algorithm as algo
 
     t0 = datetime.now()
     try:
