@@ -599,11 +599,17 @@ def render_stock_detail(df_res: pd.DataFrame):
             "", search_items, index=None,
             placeholder="输入代码或中文名称搜索...",
             label_visibility="collapsed",
+            key="stock_detail_search",
         )
     with c2:
-        go_btn = st.button("🔍 分析", use_container_width=True, type="primary")
+        go_btn = st.button("🔍 分析", use_container_width=True, type="primary", key="stock_detail_go")
+
+    # 用 session_state 跟踪是否已分析,避免缓存冲突导致其他 tab 内容混入
+    if "stock_detail_analysed" not in st.session_state:
+        st.session_state.stock_detail_analysed = False
 
     if not selected or not go_btn:
+        st.session_state.stock_detail_analysed = False
         st.markdown(
             f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
             f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
@@ -611,6 +617,8 @@ def render_stock_detail(df_res: pd.DataFrame):
             unsafe_allow_html=True,
         )
         return
+
+    st.session_state.stock_detail_analysed = True
 
     code = selected.split()[0].strip().zfill(6)
     etf_name = selected.split(maxsplit=1)[-1] if len(selected.split()) > 1 else ""
