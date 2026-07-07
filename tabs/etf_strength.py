@@ -595,9 +595,9 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     }
     short_tab_labels = ["超强势", "强势", "震荡上涨", "横盘震荡", "震荡下跌", "一直下跌"]
     labels = (
-        [f"{icons.get(l, '')}{s}" for l, s in zip(LABEL_ORDER, short_tab_labels)]
+        ["📈 个股分析"]
         + ["🔥 趋势演变"]
-        + ["📈 个股分析"]
+        + [f"{icons.get(l, '')}{s}" for l, s in zip(LABEL_ORDER, short_tab_labels)]
     )
     sub_tabs = st.tabs(labels)
     # 内层子 Tab 紧凑样式(用更渐进的选择器避免覆盖顶层 Tab)
@@ -613,10 +613,10 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
       }}
     </style>
     """, unsafe_allow_html=True)
-    for i, label in enumerate(LABEL_ORDER):
-        with sub_tabs[i]:
-            render_list_view(df_res, label_filter=label)
-    with sub_tabs[-2]:
-        render_history_table(df_hist, df_res)
-    with sub_tabs[-1]:
+    with sub_tabs[0]:
         render_stock_detail(df_res)
+    with sub_tabs[1]:
+        render_history_table(df_hist, df_res)
+    for i, label in enumerate(LABEL_ORDER):
+        with sub_tabs[i + 2]:
+            render_list_view(df_res, label_filter=label)
