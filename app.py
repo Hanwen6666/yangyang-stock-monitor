@@ -134,7 +134,12 @@ def load_results() -> pd.DataFrame:
     p = DATA_DIR / "results.csv"
     if not p.exists():
         return pd.DataFrame()
-    return pd.read_csv(p)
+    df = pd.read_csv(p)
+    # 兼容旧 CSV 缺少 latest_close/latest_volume 字段
+    for col in ["latest_close", "latest_volume", "fund_size_yi"]:
+        if col not in df.columns:
+            df[col] = 0
+    return df
 
 @st.cache_data(ttl=300)
 def load_history() -> pd.DataFrame:

@@ -112,21 +112,19 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
                 row[p] = v
             hist_rows.append(row)
         write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows, ["code", "name"] + points)
-        # 用 sina K 线确认实际最新日期,避免 API 滞后
+        # 用腾讯源 K 线确认实际最新日期,避免 API 滞后
         try:
             sys.path.insert(0, str(Path(__file__).parent / "lib"))
-            from algorithm import fetch_kline as _fk
-            _k = _fk("510300", 250)  # 拿一只
+            from lib import algorithm as algo_fix
+            _k = algo_fix.fetch_kline_tencent("510300")
             if _k is not None:
                 _latest = _k["date"].iloc[-1]
                 _ds = _latest if isinstance(_latest, str) else _latest.strftime("%Y%m%d")
                 _ds = str(_ds).replace("-", "").replace("/", "")[:8]
-                if _ds.isdigit():
+                if _ds.isdigit() and _ds > asof:
                     asof = _ds  # 覆盖 API 陈旧的 asof
-                    # rows 里也改 asof_date
                     for _r in rows:
                         _r["asof_date"] = asof
-                    # 重写 results.csv
                     write_csv(DATA_DIR / "results.csv", rows, cols)
         except Exception:
             pass
