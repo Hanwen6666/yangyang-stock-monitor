@@ -437,25 +437,166 @@ def render_kpi(df: pd.DataFrame):
             ), unsafe_allow_html=True)
 
 
+def _fmt_vol(v):
+    if v is None or v == 0:
+        return "—"
+    v = float(v)
+    if v >= 1e8:
+        return f"{v/1e8:.2f}亿"
+    elif v >= 1e4:
+        return f"{v/1e4:.0f}万"
+    return f"{int(v)}"
+
+
+def _quote_row_html(code, name, price, change_pct, direction):
+    """东财风格实时行情条"""
+    color = ACCENT_UP if direction == "up" else ACCENT_DN
+    sign = "+" if direction == "up" else ""
+    return f"""
+    <div style="display:flex;align-items:baseline;gap:12px;
+                background:{BG_PANEL};border:1px solid {BORDER};
+                border-radius:8px;padding:10px 16px;margin-bottom:8px;">
+      <div>
+        <span style="color:{TEXT};font-size:16px;font-weight:700;
+                     font-family:monospace;">{code}</span>
+        <span style="color:{TEXT_MUTED};font-size:13px;margin-left:8px;">{name}</span>
+      </div>
+      <div style="margin-left:auto;display:flex;align-items:baseline;gap:12px;">
+        <span style="color:{TEXT};font-size:22px;font-weight:700;
+                     font-family:monospace;">{price}</span>
+        <span style="color:{color};font-size:14px;font-weight:600;
+                     font-family:monospace;">{sign}{change_pct:.2f}%</span>
+      </div>
+    </div>
+    """
+
+
+def _kline_chart_html(kw_250, m):
+    """东财风格 K 线图:主流+成交量副图(底部色柱)"""
+    close = kw_250["close"].astype(float).values
+    dates = pd.to_datetime(kw_250["date"])
+    vol = kw_250["volume"].astype(float).values if "volume" in kw_250.columns else None
+    o = kw_250["open"].astype(float).values
+    h = kw_250["high"].astype(float).values
+    l = kw_250["low"].astype(float).values
+
+    fig = go.Figure()
+
+    # 成交量柱(在K线下方,独立副轴区域)
+    if vol is not None:
+        vol_colors = ["#ef4444" if close[i] >= o[i] else "#22c55e" for i in range(len(close))]
+        fig.add_trace(go.Bar(
+            x=dates, y=vol, name="成交量",
+            marker_color=vol_colors, opacity=0.5,
+            yaxis="y2",
+        ))
+
+    # K 线
+    fig.add_trace(go.Candlestick(
+        x=dates, open=o, high=h, low=l, close=close,
+        name="",
+        increasing_line_color="#ef4444",
+        decreasing_line_color="#22c55e",
+        line=dict(width=1),
+        whiskerwidth=0,
+    ))
+
+    # MA 均线
+    for n, color, width in [(5, "#f59e0b", 1.0), (20, "#60a5fa", 1.0), (60, "#a78bfa", 0.8)]:
+        if len(close) >= n:
+            ma = pd.Series(close).rolling(n).mean()
+            fig.add_trace(go.Scatter(
+                x=dates, y=ma, mode="lines",
+                name=f"MA{n}", line=dict(color=color, width=width),
+                connectgaps=False,
+            ))
+
+    fig.update_layout(
+        template="plotly_dark",
+        margin=dict(l=0, r=8, t=4, b=0),
+        height=480,
+        xaxis_rangeslider_visible=False,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=TEXT, size=10),
+        # 主价格轴
+        yaxis=dict(
+            domain=[0.28, 1],
+            anchor="x",
+            side="right",
+            tickformat=".3f",
+            gridcolor="#1f2638", gridwidth=0.5,
+            zeroline=False,
+            title="",
+        ),
+        # 成交量轴(下方 28% 区域)
+        yaxis2=dict(
+            domain=[0, 0.25],
+            anchor="x",
+            side="right",
+            showgrid=False,
+            title="",
+            tickformat=".1s",
+        ),
+        xaxis=dict(
+            gridcolor="#1f2638", gridwidth=0.5,
+            title="",
+            rangeslider_visible=False,
+        ),
+        legend=dict(
+            orientation="h", y=1.02, x=0,
+            font=dict(size=9, color=TEXT_MUTED),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        hovermode="x unified",
+        hoverlabel=dict(
+            bgcolor="#131826",
+            bordercolor="#2a334a",
+            font=dict(color=TEXT, size=11, family="SF Mono, monospace"),
+        ),
+        dragmode="pan",
+    )
+
+    return fig
+
+
+def _metric_row_html(metrics_list):
+    """东财风格行内指标条"""
+    items = ""
+    for title, value, color in metrics_list:
+        items += f"""
+        <div style="text-align:center;flex:1;min-width:0;
+                    border-right:1px solid #1f2638;padding:0 8px;">
+          <div style="color:{TEXT_DIM};font-size:9px;
+                      text-transform:uppercase;letter-spacing:0.5px;
+                      margin-bottom:2px;">{title}</div>
+          <div style="color:{color};font-size:13px;font-weight:700;
+                      font-family:monospace;">{value}</div>
+        </div>
+        """
+    return f"""
+    <div style="display:flex;background:{BG_PANEL};border:1px solid {BORDER};
+                border-radius:6px;padding:6px 0;margin-bottom:4px;">
+      {items}
+    </div>
+    """
+
+
 def render_stock_detail(df_res: pd.DataFrame):
-    """个股 ETF 分析子视图:支持代码/中文名称模糊检索 → K 线 + 趋势指标"""
+    """个股 ETF 分析子视图 — 东财风格"""
     st.markdown(f'<div style="margin-bottom:8px;"></div>', unsafe_allow_html=True)
 
-    # 构建检索索引
+    # 搜索栏
     search_items = []
     for _, r in df_res.iterrows():
-        code = str(r["code"]).zfill(6)
-        name = str(r.get("name", ""))
-        search_items.append({"code": code, "name": name, "label": f"{code} {name}"})
-
-    # 输入框自动补全
-    search_labels = [s["label"] for s in search_items]
+        c = str(r["code"]).zfill(6)
+        n = str(r.get("name", ""))
+        search_items.append(f"{c} {n}")
 
     c1, c2 = st.columns([3, 1])
     with c1:
         selected = st.selectbox(
-            "", search_labels,
-            index=None,
+            "", search_items, index=None,
             placeholder="输入代码或中文名称搜索...",
             label_visibility="collapsed",
         )
@@ -465,146 +606,76 @@ def render_stock_detail(df_res: pd.DataFrame):
     if not selected or not go_btn:
         st.markdown(
             f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
-            f'padding:32px 0;border:1px dashed {BORDER};border-radius:8px;">'
-            f'搜索并选择 ETF 后点击分析</div>',
+            f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
+            f'输入 ETF 代码或中文名称搜索后点击分析</div>',
             unsafe_allow_html=True,
         )
         return
 
     code = selected.split()[0].strip().zfill(6)
-    etf_name = selected.split()[-1] if len(selected.split()) > 1 else ""
+    etf_name = selected.split(maxsplit=1)[-1] if len(selected.split()) > 1 else ""
 
-    with st.spinner(f"正在获取 {code} {etf_name} 的 K 线数据..."):
+    with st.spinner(f"获取 {code} {etf_name} K 线数据..."):
         kline = algo.fetch_kline(code, min_len=100)
 
     if kline is None or len(kline) < 100:
-        st.error(f"无法获取 {code} 的 K 线数据,请检查代码或稍后重试")
+        st.error(f"无法获取 {code} 的数据,请检查代码或稍后重试")
         return
 
     kw = kline.dropna(subset=["close"]).reset_index(drop=True)
-    # 取最新 250 天用于计算
     kw_250 = kw.iloc[-250:].reset_index(drop=True) if len(kw) >= 250 else kw.copy()
-
-    # 计算指标
     m = algo.calc_single_etf(kw)
-
     close = kw_250["close"].astype(float).values
-    dates = pd.to_datetime(kw_250["date"])
+    o = kw_250["open"].astype(float).values
+    vol = kw_250["volume"].astype(float).values if "volume" in kw_250.columns else [0]
+    latest_price = close[-1]
+    latest_vol = vol[-1]
+    yesterday_close = close[-2] if len(close) > 1 else latest_price
+    change_pct = ((latest_price - yesterday_close) / yesterday_close) * 100
+    direction = "up" if latest_price >= yesterday_close else "dn"
 
-    # ---- 一体式 K 线 + 成交量副图 ----
-    vol = kw_250["volume"].astype(float).values if "volume" in kw_250.columns else None
+    # 从 df_res 拿信息
+    res_row = df_res[df_res["code"].astype(str).str.zfill(6) == code]
+    category = res_row["category"].iloc[0] if len(res_row) > 0 else "—"
+    fund_size = res_row["fund_size_yi"].iloc[0] if len(res_row) > 0 else 0
 
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(
-        x=dates,
-        open=kw_250["open"].astype(float),
-        high=kw_250["high"].astype(float),
-        low=kw_250["low"].astype(float),
-        close=close,
-        name="K线",
-        increasing_line_color="#ef4444",
-        decreasing_line_color="#22c55e",
-        line=dict(width=1),
-    ))
-    # 均线
-    ma_config = [(20, "#60a5fa"), (50, "#f97316"), (120, "#eab308")]
-    for n, color in ma_config:
-        if len(close) >= n:
-            ma = pd.Series(close).rolling(n).mean()
-            fig.add_trace(go.Scatter(
-                x=dates, y=ma, mode="lines",
-                name=f"MA{n}", line=dict(color=color, width=1.2),
-            ))
+    # === 顶部行情条(东财风格) ===
+    st.markdown(_quote_row_html(code, etf_name, f"{latest_price:.3f}", change_pct, direction),
+                unsafe_allow_html=True)
 
-    # 成交量副图
-    if vol is not None:
-        vol_colors = ["#ef4444" if close[i] >= close[i-1] else "#22c55e" for i in range(1, len(close))]
-        vol_colors.insert(0, "#ef4444")
-        fig.add_trace(go.Bar(
-            x=dates, y=vol, name="成交量",
-            marker_color=vol_colors, opacity=0.4,
-            yaxis="y2",
-        ))
-
-    fig.update_layout(
-        template="plotly_dark",
-        margin=dict(l=0, r=8, t=4, b=0),
-        height=440,
-        xaxis_rangeslider_visible=False,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, size=10, family="SF Mono, monospace"),
-        xaxis=dict(
-            gridcolor="#1f2638", gridwidth=0.5,
-            title="", showspikes=True, spikecolor="#2a334a", spikethickness=0.5,
-        ),
-        yaxis=dict(
-            gridcolor="#1f2638", gridwidth=0.5,
-            title="价格", side="right",
-            tickformat=".3f",
-        ),
-        yaxis2=dict(
-            gridcolor="#1f2638", gridwidth=0.5,
-            overlaying="y", side="left",
-            title="成交量", anchor="x",
-            showgrid=False,
-            layer="below traces",
-        ),
-        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=9, color=TEXT_MUTED)),
-        hovermode="x unified",
-        hoverlabel=dict(
-            bgcolor="#131826",
-            bordercolor="#2a334a",
-            font=dict(color=TEXT, size=11),
-        ),
-        dragmode="pan",
-    )
+    # === K 线图(主图+成交量副图) ===
+    fig = _kline_chart_html(kw_250, m)
     st.plotly_chart(fig, use_container_width=True, config={
         "displayModeBar": False,
         "scrollZoom": True,
     })
 
-    # ---- 指标卡片 ----
+    # === 指标条(东财风格行) ===
     if m:
-        name = kw.iloc[-1].get("name", "") if "name" in kw.columns else ""
-        latest_price = close[-1]
-        latest_vol = kw_250["volume"].astype(float).values[-1] if "volume" in kw_250.columns else 0
+        st.markdown(f'<div style="height:2px"></div>', unsafe_allow_html=True)
 
-        # 从 df_res 拿分类和规模
-        res_row = df_res[df_res["code"].astype(str).str.zfill(6) == code]
-        category = res_row["category"].iloc[0] if len(res_row) > 0 else "—"
-        fund_size = res_row["fund_size_yi"].iloc[0] if len(res_row) > 0 else 0
-
-        st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
-
-        # 两行指标卡
-        cols = st.columns(7, gap="small")
-        metrics = [
-            ("最新价", f"{latest_price:.3f}", "", TEXT),
-            ("分类", category, "", TEXT_MUTED),
-            ("规模(亿)", f"{fund_size:.1f}", "", TEXT),
-            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] else "—", "", ACCENT_UP if (m['slope_50'] or 0) > 0 else ACCENT_DN),
-            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] else "—", "", ACCENT_UP if (m['slope_20'] or 0) > 0 else ACCENT_DN),
-            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] else "—", "", ACCENT_UP if (m['slope_120'] or 0) > 0 else ACCENT_DN),
-            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] else "—", "", TEXT),
+        row1 = [
+            ("最新价", f"{latest_price:.3f}", TEXT),
+            ("涨跌幅", f"{change_pct:+.2f}%", ACCENT_UP if direction == "up" else ACCENT_DN),
+            ("成交量", _fmt_vol(latest_vol), TEXT),
+            ("分类", category, TEXT_MUTED),
+            ("规模", f"{fund_size:.1f}亿", TEXT),
+            ("趋势", m["strength_label"], LABEL_COLORS.get(m["strength_label"], (TEXT, "#fff"))[0]),
         ]
-        for i, (title, value, sub, color) in enumerate(metrics):
-            with cols[i]:
-                st.markdown(kpi_card(title, value, sub, color), unsafe_allow_html=True)
+        st.markdown(_metric_row_html(row1), unsafe_allow_html=True)
 
-        cols2 = st.columns(4, gap="small")
-        metrics2 = [
-            ("ADX", f"{m['adx']:.2f}" if m['adx'] else "—", "", TEXT),
-            ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] else "—", "", TEXT),
-            ("当前趋势", m['strength_label'], "", LABEL_COLORS.get(m['strength_label'], (TEXT, "#fff"))[0]),
-            ("成交量", f"{latest_vol/1e8:.2f}亿" if latest_vol >= 1e8 else f"{latest_vol/1e4:.0f}万", "", TEXT),
+        row2 = [
+            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] else "—",
+             ACCENT_UP if (m.get('slope_20') or 0) > 0 else ACCENT_DN),
+            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] else "—",
+             ACCENT_UP if (m.get('slope_50') or 0) > 0 else ACCENT_DN),
+            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] else "—",
+             ACCENT_UP if (m.get('slope_120') or 0) > 0 else ACCENT_DN),
+            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] else "—", TEXT),
+            ("ADX", f"{m['adx']:.2f}" if m['adx'] else "—", TEXT),
+            ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] else "—", TEXT),
         ]
-        for i, (title, value, sub, color) in enumerate(metrics2):
-            with cols2[i]:
-                st.markdown(kpi_card(title, value, sub, color), unsafe_allow_html=True)
-
-    else:
-        st.warning("K 线数据不足,无法计算指标")
+        st.markdown(_metric_row_html(row2), unsafe_allow_html=True)
 
 
 
