@@ -61,7 +61,7 @@ def render_table(df: pd.DataFrame):
     show = show.rename(columns={
         "code": "代码", "name": "名称", "strength_label": "趋势",
         "category": "分类",
-        "latest_close": "最新价", "latest_volume": "成交量",
+        "latest_close": "最新价", "latest_volume": "成交额(亿)",
         "fund_size_yi": "规模(亿)",
     })
     show["趋势"] = show["趋势"].apply(label_badge_html)
@@ -89,8 +89,19 @@ def render_table(df: pd.DataFrame):
         show["代码"] = show["代码"].apply(lambda v: f"{int(v)}" if pd.notna(v) else "—")
     if "最新价" in show.columns:
         show["最新价"] = show["最新价"].apply(fmt_price)
-    if "成交量" in show.columns:
-        show["成交量"] = show["成交量"].apply(fmt_vol)
+    if "成交额(亿)" in show.columns:
+        def _fmt_amt(r):
+            cv = float(r.get("最新价", 0))
+            vv = float(r.get("成交额(亿)", 0))
+            if cv <= 0 or vv <= 0:
+                return "—"
+            yuan = cv * vv
+            if yuan >= 1e8:
+                return f"{yuan/1e8:.2f}亿"
+            elif yuan >= 1e4:
+                return f"{yuan/1e4:.1f}万"
+            return f"{int(yuan)}"
+        show["成交额(亿)"] = show.apply(_fmt_amt, axis=1)
     if "规模(亿)" in show.columns:
         show["规模(亿)"] = show["规模(亿)"].apply(fmt_yi)
 
@@ -632,7 +643,7 @@ def render_stock_detail(df_res: pd.DataFrame):
             ("最新价", f"{latest_price:.3f}", TEXT),
             ("涨跌幅", "0.00%" if change_pct == 0 else f"{change_pct:+.2f}%",
              ACCENT_UP if direction == "up" else ACCENT_DN),
-            ("成交量", _fmt_vol(latest_vol), TEXT),
+            ("成交额", f"{(latest_price * latest_vol / 1e8):.2f}亿", TEXT),
             ("分类", category, TEXT_MUTED),
             ("规模", f"{fund_size:.1f}亿", TEXT),
             ("趋势", m["strength_label"], LABEL_COLORS.get(m["strength_label"], (TEXT, "#fff"))[0]),
