@@ -29,6 +29,7 @@ TEXT = "#e8eaef"
 TEXT_MUTED = "#7a7f96"
 TEXT_DIM = "#54586b"
 ACCENT_UP = "#ff4d4f"
+ACCENT_DN = "#22c55e"
 LABEL_COLORS = {
     "超强势":   ("#ff3b5c", "#ffffff"),
     "强势":     ("#ff7800", "#ffffff"),
@@ -490,7 +491,9 @@ def render_stock_detail(df_res: pd.DataFrame):
     close = kw_250["close"].astype(float).values
     dates = pd.to_datetime(kw_250["date"])
 
-    # ---- K 线(蜡烛图) ----
+    # ---- 一体式 K 线 + 成交量副图 ----
+    vol = kw_250["volume"].astype(float).values if "volume" in kw_250.columns else None
+
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=dates,
@@ -499,30 +502,67 @@ def render_stock_detail(df_res: pd.DataFrame):
         low=kw_250["low"].astype(float),
         close=close,
         name="K线",
-        increasing_line_color="#ff4d4f",
-        decreasing_line_color="#00d4aa",
+        increasing_line_color="#ef4444",
+        decreasing_line_color="#22c55e",
+        line=dict(width=1),
     ))
     # 均线
-    for n, color in [(20, "#4a90d9"), (50, "#ff7800"), (120, "#ffcc00")]:
+    ma_config = [(20, "#60a5fa"), (50, "#f97316"), (120, "#eab308")]
+    for n, color in ma_config:
         if len(close) >= n:
             ma = pd.Series(close).rolling(n).mean()
             fig.add_trace(go.Scatter(
                 x=dates, y=ma, mode="lines",
-                name=f"MA{n}", line=dict(color=color, width=1),
+                name=f"MA{n}", line=dict(color=color, width=1.2),
             ))
+
+    # 成交量副图
+    if vol is not None:
+        vol_colors = ["#ef4444" if close[i] >= close[i-1] else "#22c55e" for i in range(1, len(close))]
+        vol_colors.insert(0, "#ef4444")
+        fig.add_trace(go.Bar(
+            x=dates, y=vol, name="成交量",
+            marker_color=vol_colors, opacity=0.4,
+            yaxis="y2",
+        ))
+
     fig.update_layout(
         template="plotly_dark",
-        margin=dict(l=0, r=0, t=4, b=0),
-        height=400,
+        margin=dict(l=0, r=8, t=4, b=0),
+        height=440,
         xaxis_rangeslider_visible=False,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, size=10),
-        xaxis=dict(gridcolor=BORDER, gridwidth=0.5),
-        yaxis=dict(gridcolor=BORDER, gridwidth=0.5),
-        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=9)),
+        font=dict(color=TEXT, size=10, family="SF Mono, monospace"),
+        xaxis=dict(
+            gridcolor="#1f2638", gridwidth=0.5,
+            title="", showspikes=True, spikecolor="#2a334a", spikethickness=0.5,
+        ),
+        yaxis=dict(
+            gridcolor="#1f2638", gridwidth=0.5,
+            title="价格", side="right",
+            tickformat=".3f",
+        ),
+        yaxis2=dict(
+            gridcolor="#1f2638", gridwidth=0.5,
+            overlaying="y", side="left",
+            title="成交量", anchor="x",
+            showgrid=False,
+            layer="below traces",
+        ),
+        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=9, color=TEXT_MUTED)),
+        hovermode="x unified",
+        hoverlabel=dict(
+            bgcolor="#131826",
+            bordercolor="#2a334a",
+            font=dict(color=TEXT, size=11),
+        ),
+        dragmode="pan",
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=True, config={
+        "displayModeBar": False,
+        "scrollZoom": True,
+    })
 
     # ---- 指标卡片 ----
     if m:
@@ -537,49 +577,31 @@ def render_stock_detail(df_res: pd.DataFrame):
 
         st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
 
+        # 两行指标卡
         cols = st.columns(7, gap="small")
         metrics = [
             ("最新价", f"{latest_price:.3f}", "", TEXT),
             ("分类", category, "", TEXT_MUTED),
             ("规模(亿)", f"{fund_size:.1f}", "", TEXT),
-            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] else "—", "", ACCENT_UP if (m['slope_50'] or 0) > 0 else TEXT),
-            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] else "—", "", ACCENT_UP if (m['slope_20'] or 0) > 0 else TEXT),
-            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] else "—", "", ACCENT_UP if (m['slope_120'] or 0) > 0 else TEXT),
+            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] else "—", "", ACCENT_UP if (m['slope_50'] or 0) > 0 else ACCENT_DN),
+            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] else "—", "", ACCENT_UP if (m['slope_20'] or 0) > 0 else ACCENT_DN),
+            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] else "—", "", ACCENT_UP if (m['slope_120'] or 0) > 0 else ACCENT_DN),
+            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] else "—", "", TEXT),
         ]
         for i, (title, value, sub, color) in enumerate(metrics):
             with cols[i]:
                 st.markdown(kpi_card(title, value, sub, color), unsafe_allow_html=True)
 
-        st.markdown(f'<div style="height:4px"></div>', unsafe_allow_html=True)
-
         cols2 = st.columns(4, gap="small")
         metrics2 = [
-            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] else "—", "", TEXT),
             ("ADX", f"{m['adx']:.2f}" if m['adx'] else "—", "", TEXT),
             ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] else "—", "", TEXT),
             ("当前趋势", m['strength_label'], "", LABEL_COLORS.get(m['strength_label'], (TEXT, "#fff"))[0]),
+            ("成交量", f"{latest_vol/1e8:.2f}亿" if latest_vol >= 1e8 else f"{latest_vol/1e4:.0f}万", "", TEXT),
         ]
         for i, (title, value, sub, color) in enumerate(metrics2):
             with cols2[i]:
                 st.markdown(kpi_card(title, value, sub, color), unsafe_allow_html=True)
-
-        # ---- 成交量柱状图(缩略) ----
-        vol = kw_250["volume"].astype(float).values
-        fig2 = go.Figure()
-        colors = ["#ff4d4f" if c >= close[i-1] else "#00d4aa" for i, c in enumerate(close)]
-        fig2.add_trace(go.Bar(x=dates, y=vol, name="成交量", marker_color=colors, opacity=0.5))
-        fig2.update_layout(
-            template="plotly_dark",
-            margin=dict(l=0, r=0, t=4, b=0),
-            height=120,
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(color=TEXT, size=10),
-            xaxis=dict(gridcolor=BORDER, gridwidth=0.5, visible=False),
-            yaxis=dict(gridcolor=BORDER, gridwidth=0.5),
-            showlegend=False,
-        )
-        st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
 
     else:
         st.warning("K 线数据不足,无法计算指标")
