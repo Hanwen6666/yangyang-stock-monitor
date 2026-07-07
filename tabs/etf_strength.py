@@ -647,10 +647,6 @@ def render_stock_detail(df_res: pd.DataFrame):
     category = res_row["category"].iloc[0] if len(res_row) > 0 else "—"
     fund_size = res_row["fund_size_yi"].iloc[0] if len(res_row) > 0 else 0
 
-    # === 顶部行情条(东财风格) ===
-    st.markdown(_quote_row_html(code, etf_name, f"{latest_price:.3f}", change_pct, direction),
-                unsafe_allow_html=True)
-
     # === K 线图(主图+成交量副图) ===
     fig = _kline_chart_html(kw_250)
     st.plotly_chart(fig, use_container_width=True, config={
@@ -658,21 +654,17 @@ def render_stock_detail(df_res: pd.DataFrame):
         "scrollZoom": True,
     })
 
-    # === 指标条(东财风格行) ===
+    # === 指标条(合并为一行,含所有指标) ===
     if m:
         st.markdown(f'<div style="height:2px"></div>', unsafe_allow_html=True)
 
-        row1 = [
+        metrics = [
             ("最新价", f"{latest_price:.3f}", TEXT),
             ("涨跌幅", f"{change_pct:+.2f}%", ACCENT_UP if direction == "up" else ACCENT_DN),
             ("成交量", _fmt_vol(latest_vol), TEXT),
             ("分类", category, TEXT_MUTED),
             ("规模", f"{fund_size:.1f}亿", TEXT),
             ("趋势", m["strength_label"], LABEL_COLORS.get(m["strength_label"], (TEXT, "#fff"))[0]),
-        ]
-        st.markdown(_metric_row_html(row1), unsafe_allow_html=True)
-
-        row2 = [
             ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] else "—",
              ACCENT_UP if (m.get('slope_20') or 0) > 0 else ACCENT_DN),
             ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] else "—",
@@ -683,7 +675,7 @@ def render_stock_detail(df_res: pd.DataFrame):
             ("ADX", f"{m['adx']:.2f}" if m['adx'] else "—", TEXT),
             ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] else "—", TEXT),
         ]
-        st.markdown(_metric_row_html(row2), unsafe_allow_html=True)
+        st.markdown(_metric_row_html(metrics), unsafe_allow_html=True)
 
 
 
