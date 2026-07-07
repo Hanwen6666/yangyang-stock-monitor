@@ -147,6 +147,13 @@ def _cross_validate(df_list):
 _SQRT252 = math.sqrt(252)
 
 
+def _sharpe_in_window(cc, n):
+    rets = np.diff(cc[-n-1:]) / cc[-n-1:-1]
+    if len(rets) < 2 or np.std(rets) == 0:
+        return None
+    return (rets.mean() * 252) / (rets.std() * _SQRT252)
+
+
 def _compute_sliding_labels(close, high, low, n_windows=25):
     """批量计算 n 个滑动窗口(250天)的趋势分类
 
@@ -181,15 +188,9 @@ def _compute_sliding_labels(close, high, low, n_windows=25):
         s120 = (math.exp(math.log(c[-120:][-1]/c[-120:][0])*250/120)-1)*100
 
         # rolling_sharpe(close, 20/50/120)
-        def _sharpe(cc, n):
-            rets = np.diff(cc[-n-1:]) / cc[-n-1:-1]
-            if len(rets) < 2 or np.std(rets) == 0:
-                return None
-            return (rets.mean() * 252) / (rets.std() * _SQRT252)
-
-        sh20 = _sharpe(c, 20)
-        sh50 = _sharpe(c, 50)
-        sh120 = _sharpe(c, 120)
+        sh20 = _sharpe_in_window(c, 20)
+        sh50 = _sharpe_in_window(c, 50)
+        sh120 = _sharpe_in_window(c, 120)
         if all(x is not None for x in [sh20, sh50, sh120]):
             sc = 0.20 * sh20 + 0.50 * sh50 + 0.30 * sh120
         else:
