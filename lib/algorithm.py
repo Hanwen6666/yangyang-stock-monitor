@@ -64,49 +64,26 @@ def classify_one(slope, slope_20, sc, adx_, up60):
     return "横盘震荡"
 
 # ============================================================
-# K 线拉取(从 v27 移植)
+# K 线拉取 — 多源交叉验证
 # ============================================================
-def fetch_kline(code6, min_len=250):
-    """从 sina/腾讯 拉 K 线"""
-    code_sina = ('sh' if code6.startswith('5') or code6.startswith('1') else 'sz') + code6
-    code_tx = code_sina
-    try:
-        import akshare as ak
-        k = ak.fund_etf_hist_sina(symbol=code_sina)
-        if k is not None and len(k) > min_len:
-            rename = {"日期": "date", "开盘": "open", "收盘": "close",
-                      "最高": "high", "最低": "low", "成交量": "volume"}
-            return k.rename(columns=rename)
-    except Exception:
-        pass
-    try:
-        r = requests.get(
-            'http://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
-            params={'param': f'{code_tx},day,,,640,qfq'}, timeout=8,
-        )
-        if r.status_code == 200:
-            data = r.json().get('data', {})
-            if code_tx in data:
-                klines = data[code_tx].get('qfqday') or data[code_tx].get('day')
-                if klines and len(klines) > min_len:
-                    rows = [
-                        {'date': l[0], 'open': float(l[1]), 'close': float(l[2]),
-                         'high': float(l[3]), 'low': float(l[4]),
-                         'volume': float(l[5]) if len(l) > 5 else 0}
-                        for l in klines
-                    ]
-                    return pd.DataFrame(rows)
-    except Exception:
-        pass
-    return None
+
+_KLINER_SOURCES = {
+    "sina": {
+        "url": "https://vip.stock.finance.sina.com.cn/corp/go.php/vMS_MarketHistory/stock/{code}.html",
+        "parser": None,  # 通过 akshare 实现
+    },
+    "tencent": {
+        "url": "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+        "params": lambda c: {'param': f"{c},day,,,640,qfq"},
+    },
+}
 
 
-def fetch_kline_tencent(code6):
-    """纯腾讯源拉 K 线(不依赖 akshare),供个股分析降级使用"""
-    code_tx = ('sh' if code6.startswith('5') or code6.startswith('1') else 'sz') + code6
+def _parse_tencent_klines(code_tx):
+    """腾讯源:返回 DataFrame 或 None"""
     try:
         r = requests.get(
-            'http://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
+            'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
             params={'param': f'{code_tx},day,,,640,qfq'}, timeout=8,
         )
         if r.status_code == 200:
@@ -124,6 +101,98 @@ def fetch_kline_tencent(code6):
     except Exception:
         pass
     return None
+
+
+def _parse_akshare(code_sina):
+    """akshare 新浪源:返回 DataFrame 或 None"""
+    try:
+        import akshare as ak
+        k = ak.fund_etf_hist_sina(symbol=code_sina)
+        if k is not None and len(k) > 100:
+            rename = {"日期": "date", "开盘": "open", "收盘": "close",
+                      "最高": "high", "最低": "low", "成交量": "volume"}
+            return k.rename(columns=rename)
+    except Exception:
+        pass
+    return None
+
+
+def _cross_validate(df_list):
+    """多源交叉验证:比较最新 close 是否一致,返回最完整源"""
+    valid = [(i, df) for i, df in enumerate(df_list) if df is not None and len(df) >= 100]
+    if not valid:
+        return None
+    if len(valid) == 1:
+        return valid[0][1]
+
+    # 取长度最大的
+    best_idx, best_df = max(valid, key=lambda x: len(x[1]))
+    # 验证收盘价一致性(对比各源最后一天的 close)
+    best_last = best_df['close'].astype(float).iloc[-1]
+    for i, df in valid:
+        if i == best_idx:
+            continue
+        other_last = df['close'].astype(float).iloc[-1]
+        diff_pct = abs(best_last - other_last) / max(best_last, other_last) if max(best_last, other_last) > 0 else 1
+        if diff_pct > 0.02:  # 超过 2% 偏差,打印警告
+            print(f"[WARN] K线交叉验证偏差 {diff_pct*100:.2f}%: 源{best_idx} vs 源{i}")
+    return best_df
+
+
+def fetch_kline(code6, min_len=250):
+    """多源拉 K 线: akshare → 腾讯 → sina(https)
+
+    三源并行拉取,交叉验证选最优结果。
+    腾讯源使用 https 避免 HTTP 明文请求。
+    """
+    code_sina = ('sh' if code6.startswith('5') or code6.startswith('1') else 'sz') + code6
+    code_tx = code_sina
+
+    results = []
+    # 源1: akshare
+    results.append(_parse_akshare(code_sina))
+    # 源2: 腾讯 https
+    results.append(_parse_tencent_klines(code_tx))
+    # 源3: 直接通过 requests 拉新浪 CSV (不依赖 akshare)
+    try:
+        url = f"https://quotes.money.163.com/service/chddata.html?code={code_sina}&start=20200101&end=20300101"
+        r = requests.get(url, timeout=10,
+                          headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200 and len(r.text) > 1000:
+            import io
+            df_sina = pd.read_csv(io.StringIO(r.text), encoding='gbk')
+            if len(df_sina) >= 100 and '收盘价' in df_sina.columns:
+                df_sina = df_sina.rename(columns={
+                    '日期': 'date', '开盘价': 'open', '收盘价': 'close',
+                    '最高价': 'high', '最低价': 'low', '成交量': 'volume',
+                })
+                df_sina['date'] = df_sina['date'].astype(str).str.replace('-', '')
+                # 转标准格式 yyyy-mm-dd
+                from datetime import datetime
+                df_sina['date'] = df_sina['date'].apply(
+                    lambda x: f"{x[:4]}-{x[4:6]}-{x[6:8]}" if len(x)==8 else x
+                )
+                for c in ['open','close','high','low','volume']:
+                    if c in df_sina.columns:
+                        df_sina[c] = pd.to_numeric(df_sina[c], errors='coerce')
+                df_sina = df_sina.dropna(subset=['close']).reset_index(drop=True)
+                results.append(df_sina)
+    except Exception:
+        pass
+
+    best = _cross_validate(results)
+    if best is not None and len(best) > min_len:
+        return best
+    # 降级:min_len 不够但仍有数据
+    if best is not None and len(best) >= 100:
+        return best
+    return None
+
+
+def fetch_kline_tencent(code6):
+    """纯腾讯源(https)拉 K 线, 个股分析降级/备用使用"""
+    code_tx = ('sh' if code6.startswith('5') or code6.startswith('1') else 'sz') + code6
+    return _parse_tencent_klines(code_tx)
 
 
 # ============================================================

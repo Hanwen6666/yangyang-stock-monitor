@@ -19,32 +19,13 @@ import time
 
 # 把当前目录加进 path,这样 tabs/ 能 import
 sys.path.insert(0, str(Path(__file__).parent))
+from lib.constants import (  # noqa: E402
+    BG, BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
+    TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
+    LABEL_COLORS, LABEL_ORDER,
+)
 from tabs import render_all_tabs, TABS  # noqa: E402
 from fetch_data import refresh_data, recompute_locally, DATA_DIR as FETCH_DATA_DIR  # noqa: E402
-
-# ============================================================
-# 主题色(全局常量,各 Tab 通过 sys.path 引用 app.py 的常量)
-# ============================================================
-BG          = "#0a0e1a"
-BG_PANEL    = "#131826"
-BG_PANEL_HI = "#1a2030"
-BORDER      = "#1f2638"
-BORDER_HI   = "#2a334a"
-TEXT        = "#e8eaef"
-TEXT_MUTED  = "#7a7f96"
-TEXT_DIM    = "#54586b"
-ACCENT_UP   = "#ff4d4f"
-ACCENT_DN   = "#00d4aa"
-
-LABEL_COLORS = {
-    "超强势":   ("#ff3b5c", "#ffffff"),
-    "强势":     ("#ff7800", "#ffffff"),
-    "震荡上涨": ("#ffcc00", "#0a0e1a"),
-    "横盘震荡": ("#3a4156", "#c5c8d6"),
-    "震荡下跌": ("#4a90d9", "#ffffff"),
-    "一直下跌": ("#1f3556", "#7a8aa8"),
-}
-LABEL_ORDER = ["超强势", "强势", "震荡上涨", "横盘震荡", "震荡下跌", "一直下跌"]
 
 # ============================================================
 # 页面配置
