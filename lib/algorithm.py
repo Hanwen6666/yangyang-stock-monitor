@@ -144,21 +144,90 @@ def _cross_validate(df_list):
     return best_df
 
 
-def fetch_kline(code6, min_len=250):
-    """多源拉 K 线: akshare → 腾讯 → sina(https)
+_SQRT252 = math.sqrt(252)
 
-    三源并行拉取,交叉验证选最优结果。
+
+def _compute_sliding_labels(close, high, low, n_windows=25):
+    """批量计算 n 个滑动窗口(250天)的趋势分类
+
+    优化: 一次性预计算 ADX 全段,避免 25 次重复计算。
+    slope 和 sharpe 每窗口仍独立计算(开销极小)。
+    返回 [最早, ..., 最新] 共 n_windows 个 label。
+    """
+    n_adx = 14
+    s = pd.Series(close)
+    h = pd.Series(high)
+    l = pd.Series(low)
+    up = h.diff()
+    dn = -l.diff()
+    plus_dm = ((up > dn) & (up > 0)) * up
+    minus_dm = ((dn > up) & (dn > 0)) * dn
+    pc = s.shift(1)
+    tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
+    atr_n = tr.rolling(n_adx, min_periods=1).mean()
+    plus_di = 100 * plus_dm.rolling(n_adx, min_periods=1).mean() / atr_n.replace(0, np.nan)
+    minus_di = 100 * minus_dm.rolling(n_adx, min_periods=1).mean() / atr_n.replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    adx_arr = dx.rolling(n_adx, min_periods=1).mean().fillna(0).values
+
+    labels = []
+    for offset in range(n_windows):
+        end = len(close) - offset
+        c = close[end - 250:end]
+
+        # slope_window(close, 20/50/120)
+        s50 = (math.exp(math.log(c[-50:][-1]/c[-50:][0])*250/50)-1)*100
+        s20 = (math.exp(math.log(c[-20:][-1]/c[-20:][0])*250/20)-1)*100
+        s120 = (math.exp(math.log(c[-120:][-1]/c[-120:][0])*250/120)-1)*100
+
+        # rolling_sharpe(close, 20/50/120)
+        def _sharpe(cc, n):
+            rets = np.diff(cc[-n-1:]) / cc[-n-1:-1]
+            if len(rets) < 2 or np.std(rets) == 0:
+                return None
+            return (rets.mean() * 252) / (rets.std() * _SQRT252)
+
+        sh20 = _sharpe(c, 20)
+        sh50 = _sharpe(c, 50)
+        sh120 = _sharpe(c, 120)
+        if all(x is not None for x in [sh20, sh50, sh120]):
+            sc = 0.20 * sh20 + 0.50 * sh50 + 0.30 * sh120
+        else:
+            sc = None
+
+        # up_ratio
+        rets = np.diff(c[-61:]) / c[-61:-1]
+        up60 = (rets[-60:] > 0).sum() / 60 if len(rets) >= 60 else 0
+
+        # ADX (取窗口最后一天)
+        adx_val = adx_arr[end - 1]
+
+        label = classify_one(s50, s20, sc or 0, adx_val, up60)
+        labels.append(label)
+
+    labels.reverse()  # 最旧 → 最新
+    return labels
+
+
+def fetch_kline(code6, min_len=250):
+    """多源拉 K 线: 腾讯(https) + akshare(可用时) + 163(备)
+
     腾讯源使用 https 避免 HTTP 明文请求。
+    三源交叉验证选最优结果。akshare 不可用时自动跳过(避免每次~3s timeout)。
     """
     code_sina = ('sh' if code6.startswith('5') or code6.startswith('1') else 'sz') + code6
     code_tx = code_sina
 
     results = []
-    # 源1: akshare
-    results.append(_parse_akshare(code_sina))
-    # 源2: 腾讯 https
+    # 源1: 腾讯 https (最快且稳定)
     results.append(_parse_tencent_klines(code_tx))
-    # 源3: 直接通过 requests 拉新浪 CSV (不依赖 akshare)
+    # 源2: akshare (本地有则用, Streamlit Cloud 无此依赖)
+    try:
+        import akshare
+        results.append(_parse_akshare(code_sina))
+    except ImportError:
+        results.append(None)
+    # 源3: 163 CSV API (不依赖第三方库)
     try:
         url = f"https://quotes.money.163.com/service/chddata.html?code={code_sina}&start=20200101&end=20300101"
         r = requests.get(url, timeout=10,

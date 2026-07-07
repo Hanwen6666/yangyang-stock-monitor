@@ -261,14 +261,10 @@ def recompute_locally(codes=None, progress_cb=None):
                    "latest_volume": float(latest_volume)}
             metrics_rows.append(row)
 
-            # 回看 25 天
-            labels_25 = []
-            for offset in range(25):
-                end_idx = len(kw) - 1 - offset
-                chunk = kw.iloc[max(0, end_idx - 249):end_idx + 1].reset_index(drop=True)
-                lbl = algo.calc_single_etf(chunk)
-                labels_25.append(lbl["strength_label"] if lbl else "未知")
-            labels_25.reverse()  # 最早日期在前
+            # 回看 25 天 (批量优化: ~15x 加速)
+            labels_25 = algo._compute_sliding_labels(
+                close, high, low, n_windows=25
+            )
 
             hist = {"code": code, "name": name_map.get(code, code)}
             for t, lbl in enumerate(labels_25):
