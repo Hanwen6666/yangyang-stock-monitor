@@ -79,7 +79,7 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
             "name": name_map.get(code, code),
             "category": cat_map.get(code, "其他"),
             "strength_label": r.get("strength_label", "横盘震荡"),
-            "fund_size_yi": fund_size_map.get(code, 0),
+            "fund_size_yi": fund_size_map.get(code, 0) or 0,
             "latest_close": r.get("latest_close", 0),
             "latest_volume": r.get("latest_volume", 0),
             "slope_20": r["slope_20"],
@@ -142,6 +142,8 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
         except Exception:
             pass
 
+        if not asof:
+            asof = datetime.now().strftime("%Y%m%d")
         (DATA_DIR / ".asof").write_text(asof, encoding="utf-8")
 
         return {"ok": True, "asof_date": asof, "n_etfs": len(items), "n_points": len(points),

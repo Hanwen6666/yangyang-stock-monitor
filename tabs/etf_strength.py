@@ -10,7 +10,6 @@ ETF 强弱趋势分析 Tab
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
 from pathlib import Path
 
 # 复用共享常量 + algorithm

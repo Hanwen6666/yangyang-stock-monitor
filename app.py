@@ -138,7 +138,7 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
         asof_str = f"{asof[:4]}-{asof[4:6]}-{asof[6:]}"
     else:
         asof_str = str(asof)
-    n = len(df)
+    n = len(df) if not df.empty else None
 
     # 上次刷新时间显示
     last_fetch_html = ""
@@ -169,9 +169,10 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
              'border-radius:6px;padding:5px 12px;">'
           f'<span style="color:{TEXT_DIM};font-size:11px;">数据日期</span>'
           f'<span style="color:{TEXT};font-size:12px;font-weight:600;font-family:monospace;">{asof_str}</span>'
-          f'<span style="color:{BORDER_HI};">|</span>'
-          f'<span style="color:{TEXT_DIM};font-size:11px;">标的池</span>'
-          f'<span style="color:{ACCENT_UP};font-size:12px;font-weight:600;font-family:monospace;">{n}</span>'
+          + (f'<span style="color:{BORDER_HI};">|</span>'
+             f'<span style="color:{TEXT_DIM};font-size:11px;">标的池</span>'
+             f'<span style="color:{ACCENT_UP};font-size:12px;font-weight:600;font-family:monospace;">{n}</span>'
+             if n is not None else '')
           + last_fetch_html +
         '</div>'
       '</div>'
