@@ -112,7 +112,11 @@ def render_table(df: pd.DataFrame):
     if "规模(亿)" in show.columns:
         show["规模(亿)"] = show["规模(亿)"].apply(fmt_yi)
 
-    st.caption(f"共 {len(show)} 只 · 按趋势强度排序 · 表内可滚动")
+    st.markdown(
+        f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:4px;">'
+        f'共 {len(show)} 只 · 按趋势强度排序</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown(
         f'<div class="etf-table-wrap">'
         f'{show.to_html(escape=False, index=False, border=0, classes="etf-table")}'
@@ -122,29 +126,29 @@ def render_table(df: pd.DataFrame):
     st.markdown(f"""
     <style>
       .etf-table-wrap {{
-        max-height: 720px; overflow-y: auto; overflow-x: auto;
-        border-radius: 8px; border: 1px solid {BORDER}; background: {BG_PANEL};
+        max-height: 560px; overflow-y: auto; overflow-x: auto;
+        border-radius: 6px; border: 1px solid {BORDER}; background: {BG_PANEL};
       }}
-      .etf-table-wrap::-webkit-scrollbar {{ width: 8px; height: 8px; }}
+      .etf-table-wrap::-webkit-scrollbar {{ width: 4px; height: 4px; }}
       .etf-table-wrap::-webkit-scrollbar-track {{ background: {BG_PANEL}; }}
-      .etf-table-wrap::-webkit-scrollbar-thumb {{ background: {BORDER_HI}; border-radius: 4px; }}
+      .etf-table-wrap::-webkit-scrollbar-thumb {{ background: {BORDER_HI}; border-radius: 2px; }}
       .etf-table-wrap::-webkit-scrollbar-thumb:hover {{ background: {TEXT_DIM}; }}
       .etf-table {{
         width: 100%; border-collapse: collapse;
-        font-family: "SF Mono", monospace; font-size: 13px; background: {BG_PANEL};
-        border-radius: 8px;
+        font-family: "SF Mono", monospace; font-size: 11px; background: {BG_PANEL};
       }}
       .etf-table th {{
-        background: {BG_PANEL_HI}; color: {TEXT_MUTED}; font-weight: 500;
-        font-size: 10px; text-align: left; padding: 10px 14px;
+        background: {BG_PANEL_HI}; color: {TEXT_DIM};
+        font-weight: 500; font-size: 9px;
+        text-align: left; padding: 6px 10px;
         border-bottom: 1px solid {BORDER}; text-transform: uppercase;
-        letter-spacing: 0.6px; white-space: nowrap;
+        letter-spacing: 0.8px; white-space: nowrap;
         position: sticky; top: 0; z-index: 1;
       }}
       .etf-table td {{
-        padding: 10px 14px; border-bottom: 1px solid {BORDER};
+        padding: 6px 10px; border-bottom: 1px solid #151b2a;
         color: {TEXT}; white-space: nowrap; font-feature-settings: "tnum";
-        font-size: 13px;
+        font-size: 11px;
       }}
       .etf-table tr:hover td {{ background: {BG_PANEL_HI}; }}
       .etf-table tr:last-child td {{ border-bottom: none; }}
@@ -154,9 +158,8 @@ def render_table(df: pd.DataFrame):
 
 
 def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
-    """趋势演变子视图 — 表格形式 + 筛选 + 全部 ETF
-
-    列: 代码 / 名称 / 分类 / [25 天趋势标签] / 最新趋势
+    """趋势演变子视图 — 紧凑色块矩阵
+    列: 代码 / 名称 / [日期色块] (最新→最远)
     """
     if df_hist.empty or df_res.empty:
         st.info("暂无趋势历史数据")
@@ -167,113 +170,158 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
         st.info("无趋势数据点")
         return
 
-    # 把分类(从 results)拼接到 history 表上
-    cat_map = dict(zip(df_res["code"], df_res["category"]))
     df = df_hist.copy()
-    df["分类"] = df["code"].map(cat_map).fillna("—")
 
-    # === 筛选区 ===
-    fc1, fc2, fc3 = st.columns([1, 1, 2])
+    # === 筛选区: 只留日期选择 + 强弱势 ===
+    fc1, fc2 = st.columns([1, 1])
     with fc1:
-        cats = sorted(df["分类"].dropna().unique().tolist())
-        cat_filter = st.multiselect(
-            "行业分类", cats, default=[],
-            placeholder="全部(不选即全部)",
+        # 提取所有日期作为选项
+        date_options = [p.split("_")[1][:10] if "_" in p else p for p in points]
+        date_options_short = {}
+        for p, d in zip(points, date_options):
+            if len(d) >= 10:
+                date_options_short[p] = d[5:10]  # "07-03"
+            else:
+                date_options_short[p] = d
+        # 日期筛选:多选,默认选最近20天
+        date_options_rev = list(reversed(points))
+        default_dates = date_options_rev[:min(20, len(date_options_rev))]
+        selected_dates = st.multiselect(
+            "日期", date_options_rev,
+            default=default_dates,
+            format_func=lambda p: date_options_short.get(p, p),
+            placeholder="日期范围",
             label_visibility="collapsed",
         )
     with fc2:
+        # 最新日期的趋势筛选
+        latest_point = points[-1]
+        trend_opts = sorted(df[latest_point].dropna().unique().tolist()) if latest_point in df.columns else []
+        # 保持 LABEL_ORDER 顺序
+        trend_opts = [t for t in LABEL_ORDER if t in trend_opts]
         label_filter = st.multiselect(
-            "当前趋势", LABEL_ORDER, default=[],
-            placeholder="全部(不选即全部)",
+            "趋势", trend_opts,
+            default=[],
+            placeholder="趋势筛选",
             label_visibility="collapsed",
-        )
-    with fc3:
-        search = st.text_input(
-            "🔍 搜索", "", placeholder="代码或名称模糊搜索", label_visibility="collapsed"
         )
 
     # 应用筛选
-    if cat_filter:
-        df = df[df["分类"].isin(cat_filter)]
+    if selected_dates:
+        selected_points = selected_dates
+    else:
+        selected_points = points
     if label_filter:
-        # 用历史最后一天 (points[-1]) 当作「当前趋势」
-        if points:
-            df = df[df[points[-1]].isin(label_filter)]
-    if search:
-        s = search.lower()
-        df = df[df["code"].astype(str).str.contains(s, case=False, na=False) |
-                df["name"].astype(str).str.contains(s, case=False, na=False)]
+        df = df[df[latest_point].isin(label_filter)]
 
     if df.empty:
         st.info("无匹配 ETF")
         return
 
     # === 构建展示表 ===
-    # 日期列名 d_2026-07-03 → 07-03 (从最新到最远)
-    points_disp = list(reversed(points))  # 最新在左
-    col_rename = {p: (p.split("_")[1][5:10].replace("-", "-") if "_" in p else p)
-                  for p in points_disp}
+    points_disp = list(reversed(selected_points))  # 最新在左
+    # 日期格式: "2026-07-03" → "07-03"
+    col_rename = {}
+    for p in points_disp:
+        if "_" in p:
+            raw = p.split("_")[1][:10]
+            if len(raw) >= 10:
+                col_rename[p] = raw[5:10]
+            else:
+                col_rename[p] = raw
+        else:
+            col_rename[p] = p
 
-    # 最新一天的日期 → 作为最后一个「当前分类」列的列名
-    latest_date = points[-1][2:] if len(points) else ""  # "2026-07-03"
-    latest_short = latest_date[5:] if len(latest_date) >= 10 else latest_date  # "07-03"
-
-    # 先重命名所有点列(避免下面再用原始 key 找不到)
-    show = df[["code", "name", "分类"] + points].copy()
+    show = df[["code", "name"] + [p for p in selected_points if p in df.columns]].copy()
     show = show.rename(columns={"code": "代码", "name": "名称"})
     show = show.rename(columns=col_rename)
-    # 当前分类 = points[-1] 那列,重命名为具体日期
-    last_col = col_rename.get(points[-1], latest_short)
-    show = show.rename(columns={last_col: f"{latest_short} 分类"})
     date_cols = [c for c in col_rename.values() if c in show.columns]
-    # 每天的趋势 → 色块 (注意:历史色块处理后再改最后一列)
-    for orig_p, disp_col in col_rename.items():
-        if disp_col in show.columns and disp_col != last_col:
-            show[disp_col] = show[disp_col].apply(_history_cell_html)
-    # 最右一列(最新日期)也用色块
-    show[f"{latest_short} 分类"] = show[f"{latest_short} 分类"].apply(label_badge_html)
+    # 每个日期列 → 紧凑色块
+    for p, disp in col_rename.items():
+        if disp in show.columns:
+            show[disp] = show[disp].apply(_compact_cell_html)
 
-    # 列顺序
-    base_cols = ["代码", "名称", "分类"]
+    # 列顺序: 代码 + 名称 + 日期
+    base_cols = ["代码", "名称"]
     show = show[base_cols + date_cols]
 
-    st.caption(
-        f"共 {len(show)} 只 · "
-        f"日期从左(最新 {latest_short})到右(最远) · "
-        f"共 {len(date_cols)} 天 · "
-        f"色块🟥超强势 🟧强势 🟨震荡上涨 ⬜横盘震荡 🟦震荡下跌 🟫一直下跌"
-    )
     st.markdown(
-        f'<div class="etf-table-wrap">'
-        f'{show.to_html(escape=False, index=False, border=0, classes="etf-table history-table")}'
+        f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:2px;'
+        f'display:flex;justify-content:space-between;align-items:center;">'
+        f'<span>共 {len(show)} 只 · {len(date_cols)} 天</span>'
+        f'<span>🟥超强 🟧强势 🟨涨中 ⬜横盘 🟦跌中 🟫下跌</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
-    # 给历史表格加专门的样式: 日期列用色块
+    st.markdown(
+        f'<div class="compact-table-wrap">'
+        f'{show.to_html(escape=False, index=False, border=0, classes="compact-table")}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown(f"""
     <style>
-      .history-table th {{ min-width: 36px; text-align: center !important; }}
-      .history-table td {{ text-align: center; }}
-      .history-table td:first-child,
-      .history-table td:nth-child(2),
-      .history-table td:nth-child(3),
-      .history-table td:nth-child(4) {{ text-align: left; }}
+      .compact-table-wrap {{
+        max-height: 320px; overflow-y: auto; overflow-x: auto;
+        border-radius: 4px; border: 1px solid {BORDER}; background: {BG_PANEL};
+      }}
+      .compact-table-wrap::-webkit-scrollbar {{ width: 3px; height: 3px; }}
+      .compact-table-wrap::-webkit-scrollbar-track {{ background: {BG_PANEL}; }}
+      .compact-table-wrap::-webkit-scrollbar-thumb {{ background: {BORDER_HI}; border-radius: 1px; }}
+      .compact-table {{ width: 100%; border-collapse: collapse; }}
+      .compact-table thead {{ position: sticky; top: 0; z-index: 2; }}
+      .compact-table th {{
+        background: {BG_PANEL_HI}; color: {TEXT_DIM};
+        font-weight: 500; font-size: 7px;
+        text-align: center !important; padding: 2px 2px;
+        border-bottom: 1px solid {BORDER};
+        text-transform: uppercase; letter-spacing: 0.5px;
+        white-space: nowrap;
+      }}
+      .compact-table th:nth-child(-n+2) {{ text-align: left !important; padding-left: 4px; }}
+      .compact-table td {{
+        padding: 1px 2px; border-bottom: 1px solid #0f1420;
+        color: {TEXT}; white-space: nowrap;
+        font-size: 9px; text-align: center;
+        line-height: 1.2;
+      }}
+      .compact-table td:nth-child(-n+2) {{ text-align: left !important; padding-left: 4px; }}
+      .compact-table th:first-child, .compact-table td:first-child {{
+        position: sticky; left: 0; z-index: 3;
+        min-width: 48px;
+      }}
+      .compact-table th:first-child {{ background: #141b2a; z-index: 4; }}
+      .compact-table td:first-child {{ background: #0f141f; }}
+      .compact-table tr:hover td:first-child {{ background: {BG_PANEL_HI}; }}
+      .compact-table tr:hover td {{ background: #141b28; }}
+      .compact-table tr:last-child td {{ border-bottom: none; }}
     </style>
     """, unsafe_allow_html=True)
 
 
-def _history_cell_html(label: str) -> str:
-    """历史表单元格:色块 + 文字(全称)"""
+def _compact_cell_html(label: str) -> str:
+    """紧凑色块:只显示缩略文字(2-3字),更小 padding,更紧凑"""
     if not label or pd.isna(label) or label == "":
         return '<span style="color:#54586b">—</span>'
     bg, fg = LABEL_COLORS.get(label, ("#3a4156", "#fff"))
+    # 缩略映射
+    short_map = {
+        "超强势": "超强",
+        "强势": "强势",
+        "震荡上涨": "涨中",
+        "横盘震荡": "横盘",
+        "震荡下跌": "跌中",
+        "一直下跌": "下跌",
+    }
+    short = short_map.get(label, label[:2])
     return (
         f'<span style="'
         f'background:{bg};color:{fg};'
-        f'padding:2px 6px;border-radius:3px;'
-        f'font-size:11px;font-weight:600;'
+        f'padding:1px 4px;border-radius:2px;'
+        f'font-size:10px;font-weight:600;'
         f'display:inline-block;text-align:center;'
-        f'white-space:nowrap;line-height:1.3;">{label}</span>'
+        f'white-space:nowrap;line-height:1.5;'
+        f'min-width:22px;">{short}</span>'
     )
 
 
@@ -292,22 +340,33 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
         df_view = sort_df(df_res, "strength_label", "desc")
         title_extra = ""
 
-    c1, c2 = st.columns([1, 2])
-    with c1: st.metric("标的池", f"{len(df_view):,} 只")
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        st.markdown(
+            f'<div style="background:{BG_PANEL};border:1px solid {BORDER};'
+            f'border-radius:6px;padding:6px 10px;text-align:center;">'
+            f'<div style="color:{TEXT_MUTED};font-size:10px;text-transform:uppercase;'
+            f'letter-spacing:0.5px;">标的池</div>'
+            f'<div style="color:{TEXT};font-size:16px;font-weight:700;'
+            f'font-family:monospace;">{len(df_view):,}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
     with c2:
         top = df_view.iloc[0] if len(df_view) else None
         if top is not None:
             bg, _ = LABEL_COLORS.get(top["strength_label"], ("#fff", "#fff"))
             st.markdown(
-                f'<div style="text-align:right;color:{TEXT_MUTED};font-size:12px;line-height:1.5">'
-                f'排序首位:<br>'
-                f'<b style="color:{TEXT};font-size:15px;font-family:monospace">'
-                f'{top["code"]} {top["name"]}</b> · '
-                f'<span style="color:{bg};font-weight:600">'
-                f'{top["strength_label"]}</span></div>',
+                f'<div style="text-align:right;color:{TEXT_DIM};font-size:10px;'
+                f'padding:4px 0;">'
+                f'<span style="color:{TEXT_MUTED};">排序首位</span> '
+                f'<span style="color:{TEXT};font-size:13px;font-weight:600;'
+                f'font-family:monospace;">{top["code"]} {top["name"]}</span> '
+                f'<span style="color:{bg};font-weight:600;font-size:10px;">'
+                f'· {top["strength_label"]}</span></div>',
                 unsafe_allow_html=True,
             )
-    st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="height:6px"></div>', unsafe_allow_html=True)
     if df_view.empty:
         st.info(f"该分类下暂无 ETF{title_extra}")
     else:
@@ -315,19 +374,19 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
 
 
 def kpi_card(title: str, value: str, sub: str, color: str, hover_color: str | None = None) -> str:
-    """统一 KPI 卡。hover_color:鼠标悬停时主数字颜色"""
+    """统一 KPI 卡(紧凑版)"""
     return (
         f'<div class="kpi-card" '
         f'style="background:{BG_PANEL};border:1px solid {BORDER};'
-        f'border-radius:10px;padding:14px 16px;height:88px;'
-        f'transition:all 0.2s ease;cursor:default;">'
-        f'<div style="color:{TEXT_MUTED};font-size:11px;font-weight:500;'
+        f'border-radius:8px;padding:8px 10px;height:66px;'
+        f'transition:all 0.15s ease;cursor:default;">'
+        f'<div style="color:{TEXT_MUTED};font-size:9px;font-weight:500;'
         f'letter-spacing:0.5px;text-transform:uppercase;'
         f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{title}</div>'
-        f'<div class="kpi-value" style="color:{color};font-size:26px;font-weight:600;'
-        f'font-family:monospace;margin-top:4px;line-height:1.15;'
+        f'<div class="kpi-value" style="color:{color};font-size:18px;font-weight:700;'
+        f'font-family:monospace;margin-top:2px;line-height:1.15;'
         f'font-feature-settings:&quot;tnum&quot;;">{value}</div>'
-        f'<div style="color:{TEXT_DIM};font-size:11px;margin-top:3px;'
+        f'<div style="color:{TEXT_DIM};font-size:9px;margin-top:1px;'
         f'font-family:monospace;">{sub}</div>'
         f'</div>'
     )
@@ -338,7 +397,7 @@ def render_kpi(df: pd.DataFrame):
     total_size = df["fund_size_yi"].sum() if "fund_size_yi" in df.columns else 0
     n_total = len(df)
 
-    # 注入 hover 样式
+    # 注入 KPI 样式
     st.markdown(f"""
     <style>
       .kpi-card:hover {{
@@ -349,6 +408,8 @@ def render_kpi(df: pd.DataFrame):
       .kpi-card:hover .kpi-value {{
         filter: brightness(1.2);
       }}
+      /* KPI 列间距压紧 */
+      .row-widget.stHorizontal {{ gap: 4px !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -396,8 +457,22 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         "震荡下跌": "🟦",
         "一直下跌": "🟫",
     }
-    labels = [f"{icons.get(l, '')} {l}" for l in LABEL_ORDER] + ["🔥 趋势演变"]
+    short_tab_labels = ["超强势", "强势", "震荡上涨", "横盘震荡", "震荡下跌", "一直下跌"]
+    labels = [f"{icons.get(l, '')} {s}" for l, s in zip(LABEL_ORDER, short_tab_labels)] + ["🔥 趋势演变"]
     sub_tabs = st.tabs(labels)
+    # 内层子 Tab 紧凑样式(用更渐进的选择器避免覆盖顶层 Tab)
+    st.markdown(f"""
+    <style>
+      .stTabs .stTabs [data-baseweb="tab-list"] {{
+        gap: 2px !important;
+      }}
+      .stTabs .stTabs [data-baseweb="tab"] {{
+        font-size: 10px !important;
+        padding: 0 8px !important;
+        height: 30px !important;
+      }}
+    </style>
+    """, unsafe_allow_html=True)
     for i, label in enumerate(LABEL_ORDER):
         with sub_tabs[i]:
             render_list_view(df_res, label_filter=label)
