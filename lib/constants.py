@@ -43,6 +43,7 @@ SHORT_MAP = {
 # ============================================================
 # 行业分类映射(名称正则 → 行业主题)
 # ============================================================
+import re
 CATEGORY_MAP = [
     (r"半导体|芯片|集成电路|电子|信息技术|科技|AI|人工智能|机器人|智能制造|软件|互联网|游戏|传媒|通信|云计算|数字|大数据|计算机", "科技"),
     (r"医药|医疗|创新药|生物|疫苗|中药|医药卫生|医疗器械|健康|生物科技|医药ETF", "医药健康"),
@@ -66,7 +67,6 @@ def classify_name(name: str) -> str:
     if not name:
         return "其他"
     for pattern, cat in CATEGORY_MAP:
-        import re
         if re.search(pattern, name):
             return cat
     return "其他"

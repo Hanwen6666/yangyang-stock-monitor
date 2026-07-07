@@ -6,6 +6,7 @@ ETF 强弱趋势算法 v27 — 从理财助理生产代码移植
 ⚠️ 不要修改阈值(已经过 20+ 次迭代调优)
 """
 import math
+import io
 import numpy as np
 import pandas as pd
 import requests

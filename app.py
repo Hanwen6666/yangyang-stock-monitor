@@ -261,7 +261,6 @@ def main():
                                    text=f"{phase} {i}/{total} · {code}")
 
             try:
-                from fetch_data import recompute_locally
                 local_res = recompute_locally(progress_cb=on_progress)
             except Exception as e:
                 progress.empty()
