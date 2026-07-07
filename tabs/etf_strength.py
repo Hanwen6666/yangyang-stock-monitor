@@ -630,7 +630,8 @@ def render_stock_detail(df_res: pd.DataFrame):
 
         metrics = [
             ("最新价", f"{latest_price:.3f}", TEXT),
-            ("涨跌幅", f"{change_pct:+.2f}%", ACCENT_UP if direction == "up" else ACCENT_DN),
+            ("涨跌幅", "0.00%" if change_pct == 0 else f"{change_pct:+.2f}%",
+             ACCENT_UP if direction == "up" else ACCENT_DN),
             ("成交量", _fmt_vol(latest_vol), TEXT),
             ("分类", category, TEXT_MUTED),
             ("规模", f"{fund_size:.1f}亿", TEXT),
@@ -668,11 +669,10 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         "震荡下跌": "🟦",
         "一直下跌": "🟫",
     }
-    short_tab_labels = ["超强势", "强势", "震荡上涨", "横盘震荡", "震荡下跌", "一直下跌"]
     labels = (
         ["📈 个股分析"]
         + ["🔥 趋势演变"]
-        + [f"{icons.get(l, '')}{s}" for l, s in zip(LABEL_ORDER, short_tab_labels)]
+        + [f"{icons.get(l, '')}{l}" for l in LABEL_ORDER]
     )
     sub_tabs = st.tabs(labels)
     # 内层子 Tab 紧凑样式(用更渐进的选择器避免覆盖顶层 Tab)

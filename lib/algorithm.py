@@ -274,11 +274,7 @@ def fetch_kline(code6, min_len=250):
                     '日期': 'date', '开盘价': 'open', '收盘价': 'close',
                     '最高价': 'high', '最低价': 'low', '成交量': 'volume',
                 })
-                df_sina['date'] = df_sina['date'].astype(str).str.replace('-', '')
-                # 转标准格式 yyyy-mm-dd
-                df_sina['date'] = df_sina['date'].apply(
-                    lambda x: f"{x[:4]}-{x[4:6]}-{x[6:8]}" if len(x)==8 else x
-                )
+                df_sina['date'] = pd.to_datetime(df_sina['date']).dt.strftime('%Y-%m-%d')
                 for c in ['open','close','high','low','volume']:
                     if c in df_sina.columns:
                         df_sina[c] = pd.to_numeric(df_sina[c], errors='coerce')
