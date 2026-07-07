@@ -102,7 +102,7 @@ def render_table(df: pd.DataFrame):
         return f"{v*100:.1f}%"
 
     if "代码" in show.columns:
-        show["代码"] = show["代码"].apply(fmt_int)
+        show["代码"] = show["代码"].apply(lambda v: f"{int(v)}" if pd.notna(v) else "—")
     for col, prec in [("50日斜率", 2), ("20日斜率", 2), ("120日斜率", 2),
                        ("夏普", 3), ("ADX", 2), ("样本", 0)]:
         if col in show.columns:
