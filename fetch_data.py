@@ -71,7 +71,7 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
     name_map, fund_size_map, cat_map = _load_pool_meta()
 
     cols = ["code", "name", "category", "strength_label", "fund_size_yi",
-            "latest_close", "latest_volume",
+            "latest_close", "latest_volume", "latest_amount",
             "slope_20", "slope_50", "slope_120", "sharpe_composite", "adx",
             "up_ratio_60", "n_changes", "n_points", "asof_date"]
     rows = []
@@ -85,6 +85,8 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
             "fund_size_yi": fund_size_map.get(code, 0) or 0,
             "latest_close": r.get("latest_close", 0),
             "latest_volume": r.get("latest_volume", 0),
+            "latest_amount": r.get("latest_amount", 0),
+            "latest_amount": r.get("latest_amount", 0),
             "slope_20": r["slope_20"],
             "slope_50": r["slope_50"],
             "slope_120": r["slope_120"],
@@ -107,7 +109,7 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
         items = list_data.get("items", [])
         asof = list_data.get("asof_date", "")
         cols = ["code", "name", "category", "strength_label", "fund_size_yi",
-                "latest_close", "latest_volume",
+                "latest_close", "latest_volume", "latest_amount",
                 "slope_20", "slope_50", "slope_120", "sharpe_composite", "adx",
                 "up_ratio_60", "n_changes", "n_points", "asof_date"]
         # API items 缺字段兜底
@@ -267,9 +269,12 @@ def recompute_locally(codes=None, progress_cb=None):
             latest_close = close[-1] if len(close) > 0 else 0.0
             latest_volume = kw["volume"].astype(float).values[-1] if "volume" in kw.columns and len(kw) > 0 else 0.0
 
+            # 从腾讯快照拉成交额
+            latest_amount = algo.fetch_amount(code)
             row = {"code": code, **m,
                    "latest_close": float(latest_close),
-                   "latest_volume": float(latest_volume)}
+                   "latest_volume": float(latest_volume),
+                   "latest_amount": float(latest_amount) if latest_amount else 0.0}
             metrics_rows.append(row)
 
             # 回看 25 天 (批量优化: ~15x 加速)

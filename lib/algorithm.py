@@ -312,9 +312,30 @@ def fetch_kline_tencent(code6):
     return _parse_tencent_klines(code_tx)
 
 
-# ============================================================
-# 单只 ETF 完整计算(v27 移植)
-# ============================================================
+def fetch_amount(code6):
+    """从腾讯快照取最新成交额(元)"""
+    tx = ('sh' if code6.startswith('5') or code6.startswith('1') else 'sz') + code6
+    import re, requests
+    try:
+        r = requests.get('https://web.sqt.gtimg.cn/q=' + tx, timeout=5)
+        if r.status_code == 200 and '~' in r.text:
+            m = re.search(r'~([\d.]+)/([\d.]+)/([\d.]+)~', r.text)
+            if m:
+                return float(m.group(3))
+    except Exception:
+        pass
+    if tx.startswith('sh'):
+        try:
+            r2 = requests.get('https://web.sqt.gtimg.cn/q=sz' + code6, timeout=5)
+            if r2.status_code == 200 and '~' in r2.text:
+                m2 = re.search(r'~([\d.]+)/([\d.]+)/([\d.]+)~', r2.text)
+                if m2:
+                    return float(m2.group(3))
+        except Exception:
+            pass
+    return None
+
+
 def calc_single_etf(kline, win_key="slope_50"):
     """根据 K 线计算一只 ETF 全部指标"""
     if kline is None or len(kline) < 250: return None
