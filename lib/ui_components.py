@@ -9,7 +9,7 @@ from html import escape
 
 from lib.constants import (
     BG_PANEL, BORDER, BORDER_HI, TEXT, TEXT_MUTED, TEXT_DIM,
-    LABEL_COLORS, LABEL_STYLES,
+    LABEL_STYLES,
     FONT_KPI_TITLE, FONT_KPI_VALUE, FONT_KPI_SUB,
     FONT_METRIC_TITLE, FONT_METRIC_VALUE,
     KPI_CARD_HEIGHT,
@@ -29,7 +29,8 @@ def label_badge_html(label: str) -> str:
             f'box-shadow:inset 0 1px 0 rgba(255,255,255,0.15),0 1px 3px rgba(0,0,0,0.3);'
             f'">{escape(label)}</span>'
         )
-    bg, fg = LABEL_COLORS.get(label, ("#3a4156", "#fff"))
+    s = LABEL_STYLES.get(label)
+    bg, fg = (s["bg"], s["fg"]) if s else ("#3a4156", "#fff")
     return (
         f'<span style="'
         f'background:{bg};color:{fg};'

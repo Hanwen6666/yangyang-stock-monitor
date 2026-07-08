@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from lib.constants import (  # noqa: E402
     BG, BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
-    LABEL_COLORS, LABEL_ORDER,
+    LABEL_ORDER,
 )
 from tabs import render_all_tabs, TABS  # noqa: E402
 from fetch_data import refresh_data, recompute_locally, DATA_DIR as FETCH_DATA_DIR  # noqa: E402
@@ -139,19 +139,24 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
         asof_str = str(asof)
     n = len(df) if not df.empty else None
 
-    # 上次刷新时间显示
+    # 上次刷新时间显示 —— 永久显示，刷新任何 widget 都不丢
     last_fetch_html = ""
     if refresh_state and refresh_state.get("fetched_at"):
         fa = refresh_state["fetched_at"]
         try:
             t = fa.split("T")[1].split(".")[0] if "T" in fa else fa.split(" ")[1]
+            mode_label = "本地" if refresh_state.get("mode") == "local" else "API"
+            n_etfs = refresh_state.get("n_etfs", 0)
+            elapsed = refresh_state.get("elapsed_ms", 0)
             last_fetch_html = (
                 f'<span style="color:{BORDER_HI};">|</span>'
-                f'<span style="color:{TEXT_DIM};font-size:11px;">刷新</span>'
-                f'<span style="color:{TEXT_MUTED};font-size:12px;font-family:monospace;">{t}</span>'
+                f'<span style="color:{TEXT_DIM};font-size:10px;">刷新</span>'
+                f'<span style="color:{TEXT_MUTED};font-size:11px;font-family:monospace;">{t}</span>'
+                f'<span style="color:{TEXT_DIM};font-size:9px;margin-left:2px;">'
+                f'·{mode_label}·{n_etfs}只·{elapsed}ms</span>'
             )
         except Exception:
-            last_fetch_html = f'<span style="color:{TEXT_DIM};font-size:11px;">刷新 {fa}</span>'
+            last_fetch_html = f'<span style="color:{TEXT_DIM};font-size:10px;">刷新 {fa}</span>'
 
     header_html = (
         '<div style="display:flex;align-items:center;gap:12px;margin-bottom:2px;'
@@ -294,18 +299,7 @@ def main():
             # 既保住个股分析 tab 的搜索/选择状态,也能继续显示「上次刷新」灰条。
             # —— refresh 完成后再渲染一次 header(带上新数据日期) + 喂新数据给 tabs。
             render_header(df_res, final)
-        elif rs:
-            # 显示上次刷新状态
-            fa = rs["fetched_at"].split("T")[1].split(".")[0] if "T" in rs["fetched_at"] else rs["fetched_at"]
-            mode_label = "本地重算" if rs.get("mode") == "local" else "API"
-            st.markdown(
-                f'<div style="color:{TEXT_DIM};font-size:11px;padding-top:8px;'
-                f'font-family:monospace;">'
-                f'上次刷新: {fa} ({mode_label}) · {rs["n_etfs"]} 只 ETF'
-                f' · {rs["elapsed_ms"]}ms'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+        # else: 「上次刷新」状态现在永久显示在 render_header 里了，不需要再这里重复
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
 

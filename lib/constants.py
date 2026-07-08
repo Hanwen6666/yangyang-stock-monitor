@@ -29,7 +29,7 @@ LABEL_STYLES = {
     "震荡下跌": {"bg": "#3a7bd5", "fg": "#ffffff", "gradient": "linear-gradient(135deg,#3a7bd5,#2a5db0)", "glow": "#5b93e0"},
     "一直下跌": {"bg": "#1c2538", "fg": "#9aaaC0", "gradient": "linear-gradient(135deg,#1c2538,#121925)", "glow": "#2a3450"},
 }
-LABEL_COLORS = {k: (v["bg"], v["fg"]) for k, v in LABEL_STYLES.items()}
+LABEL_COLORS = {k: (v["bg"], v["fg"]) for k, v in LABEL_STYLES.items()}  # 兼容保留。推荐用 LABEL_STYLES[label] 访问
 LABEL_ORDER = ["超强势", "强势", "震荡上涨", "横盘震荡", "震荡下跌", "一直下跌"]
 
 # 缩略映射(紧凑色块用)

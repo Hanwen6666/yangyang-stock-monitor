@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from lib.constants import (  # noqa: E402
     BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
-    LABEL_COLORS, LABEL_ORDER, LABEL_STYLES, SHORT_MAP,
+    LABEL_ORDER, LABEL_STYLES, SHORT_MAP,
     CHART_KLINE_HEIGHT,
 )
 from lib import algorithm as algo
@@ -169,16 +169,53 @@ def render_table(df: pd.DataFrame):
         show["规模(亿)"] = show["规模(亿)"].apply(fmt_yi)
 
     st.markdown(
-        f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:4px;">'
-        f'共 {len(show)} 只 · 按趋势强度排序</div>',
+        f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:4px;'
+        f'display:flex;align-items:center;gap:8px;">'
+        f'<span>共 <b style="color:{TEXT};">{len(show)}</b> 只 · 按趋势强度排序</span>'
+        f'<input type="search" id="etf_search_{id(df)}" placeholder="🔍 过滤代码/名称/趋势" '
+        f'style="margin-left:auto;background:{BG_PANEL};color:{TEXT};border:1px solid {BORDER};'
+        f'border-radius:4px;padding:2px 8px;font-size:11px;width:240px;outline:none;" '
+        f'autocomplete="off"/>'
+        f'<span id="etf_search_count_{id(df)}" style="color:{TEXT_DIM};font-size:10px;"></span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        f'<div class="etf-table-wrap">'
+        f'<div class="etf-table-wrap" data-uid="{id(df)}">'
         f'{show.to_html(escape=False, index=False, border=0, classes="etf-table")}'
         f'</div>',
         unsafe_allow_html=True,
     )
+    # 客户端过滤脚本：实时过滤行,不需后端 round-trip
+    st.markdown(f"""
+    <script>
+    (function(){{
+      var uid = '{id(df)}';
+      var input = document.getElementById('etf_search_' + uid);
+      var counter = document.getElementById('etf_search_count_' + uid);
+      var wrap = document.querySelector('.etf-table-wrap[data-uid="' + uid + '"]');
+      if (!input || !wrap) return;
+      var rows = wrap.querySelectorAll('tbody tr');
+      var total = rows.length;
+      function apply(){{
+        var q = (input.value || '').trim().toLowerCase();
+        var visible = 0;
+        rows.forEach(function(r){{
+          if (!q) {{ r.style.display = ''; visible++; return; }}
+          var t = r.textContent.toLowerCase();
+          r.style.display = t.indexOf(q) >= 0 ? '' : 'none';
+          if (r.style.display !== 'none') visible++;
+        }});
+        if (counter) counter.textContent = q ? (visible + ' / ' + total) : '';
+      }}
+      input.addEventListener('input', apply);
+      // 按 ESC 清除
+      input.addEventListener('keydown', function(e){{
+        if (e.key === 'Escape') {{ input.value = ''; apply(); }}
+      }});
+    }})();
+    </script>
+    """, unsafe_allow_html=True)
     st.markdown(f"""
     <style>
       .etf-table-wrap {{
@@ -407,7 +444,8 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
     with c2:
         top = df_view.iloc[0] if len(df_view) else None
         if top is not None:
-            bg, _ = LABEL_COLORS.get(top["strength_label"], ("#fff", "#fff"))
+            s = LABEL_STYLES.get(top["strength_label"])
+            bg = s["glow"] if s else "#fff"
             st.markdown(
                 f'<div style="text-align:right;color:{TEXT_DIM};font-size:10px;'
                 f'padding:4px 0;">'
@@ -704,7 +742,7 @@ def render_stock_detail(df_res: pd.DataFrame):
             ("成交额", f"{(_cached_fetch_amount(code) or 0) / 1e8:.2f}亿", TEXT),
             ("分类", category, TEXT_MUTED),
             ("规模", f"{fund_size:.1f}亿", TEXT),
-            ("趋势", m["strength_label"], LABEL_COLORS.get(m["strength_label"], (TEXT, "#fff"))[0]),
+            ("趋势", m["strength_label"], LABEL_STYLES.get(m["strength_label"], {}).get("glow", TEXT)),
             ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] is not None else "-",
              _slope_color_fn(m.get('slope_20'))),
             ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] is not None else "-",
@@ -719,13 +757,41 @@ def render_stock_detail(df_res: pd.DataFrame):
 
 
 
-def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
-    """ETF 强弱趋势 Tab 入口(被 tabs/__init__.py 调用)
+# ============================================================
+# 三个顶层 Tab 入口
+# ============================================================
+def _subview_radio(view_keys, view_labels, state_key, default_idx=0):
+    """一个跨 Tab 共享的子视图 radio,带 session_state 保持"""
+    if state_key not in st.session_state:
+        st.session_state[state_key] = view_keys[default_idx]
+    # 优先尝试 st.segmented_control(1.40+ 原生),失败则降级为 radio(1.39)
+    try:
+        _sel = st.segmented_control(
+            "", view_labels,
+            selection_mode="single",
+            default=view_labels[view_keys.index(st.session_state[state_key])]
+                    if st.session_state[state_key] in view_keys else view_labels[default_idx],
+            key=f"seg_{state_key}",
+            label_visibility="collapsed",
+        )
+        if _sel is None:
+            _sel = view_labels[default_idx]
+    except Exception:
+        # Fallback: 传统 radio(云端 1.39)
+        _sel = st.radio(
+            "", view_labels,
+            index=view_keys.index(st.session_state[state_key])
+                  if st.session_state[state_key] in view_keys else default_idx,
+            horizontal=True, label_visibility="collapsed",
+            key=f"radio_{state_key}",
+        )
+    if _sel in view_labels:
+        st.session_state[state_key] = view_keys[view_labels.index(_sel)]
+    return st.session_state[state_key]
 
-    当前结构: 1 个 ETF 强弱 Tab + 内部 KPI + 7 个子视图
-    后续如果要把这些子视图升级成独立顶层 Tab,改这里即可
-    """
-    # KPI 只在 ETF Tab 内显示(其他 Tab 不要标的池/趋势分布这些 ETF 专用指标)
+
+def render_overview(df_res: pd.DataFrame, df_hist: pd.DataFrame):
+    """顶层 Tab 【📊 大盘总览】: KPI + 6 档分类子视图(股票详情 / 趋势演变 / 6档列表)"""
     render_kpi(df_res, df_hist)
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
 
@@ -737,42 +803,44 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         "震荡下跌": "🟦",
         "一直下跌": "🟫",
     }
-    # 8 个子视图: 个股分析 + 趋势演变 + 6 个趋势分类
-    view_keys = ["stock_detail", "history"] + list(LABEL_ORDER)
-    view_labels = ["📈 个股分析", "🔥 趋势演变"]
-    view_labels += [f"{icons.get(l, '')}{l}" for l in LABEL_ORDER]
+    view_keys = list(LABEL_ORDER)
+    view_labels = [f"{icons.get(l, '')}{l}" for l in LABEL_ORDER]
 
-    # 跨 tab 切换时重置为默认视图(避免个股分析残留卡死)
-    if "_active_view" not in st.session_state or "_tab_reset" not in st.session_state:
-        st.session_state._active_view = view_keys[0]
-        st.session_state._tab_reset = True
+    sel = _subview_radio(view_keys, view_labels, state_key="_overview_view", default_idx=0)
+    render_list_view(df_res, label_filter=sel)
 
-    # 导航条: 原生 segmented_control,贴侧滑、胡须、blur 动效都是 Streamlit 自带
-    # key 以顶层 tab 名为前缀·避免跨顶层 tab 切换时 widget 冲突
-    _top_tab_id = "etf_strength"
-    _radio_key = f"view_seg_{_top_tab_id}"
-    # 注意：使用了 segmented_control / pills / segmented_button 这些 1.40+ API 上
-    # cloud 跑 1.39 会 AttributeError,这里统一用 radio + namespace key,
-    # 保留了原本 radio 的横向外观 + 原有 CSS 补丁。
-    _selected = st.radio(
-        "", view_labels,
-        index=view_keys.index(st.session_state._active_view)
-              if st.session_state._active_view in view_keys else 0,
-        horizontal=True, label_visibility="collapsed", key=_radio_key,
+    st.markdown(f"""
+    <button class="back-to-top" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="回到顶部">↑</button>
+    """, unsafe_allow_html=True)
+
+
+def render_history(df_res: pd.DataFrame, df_hist: pd.DataFrame):
+    """顶层 Tab 【🔥 趋势演变】: 25天色块热力图"""
+    st.markdown(
+        f'<div style="color:{TEXT_MUTED};font-size:13px;margin-bottom:8px;">'
+        f'<b>🔥 趋势演变</b> · 最近 25 个交易日'
+        f'<span style="color:{TEXT_DIM};font-size:10px;margin-left:8px;">'
+        f'色块=当天所属档位·鼠标悬停看完整名</span></div>',
+        unsafe_allow_html=True,
     )
-    # 映射回 view key
-    if _selected in view_labels:
-        st.session_state._active_view = view_keys[view_labels.index(_selected)]  
+    render_history_table(df_hist, df_res)
 
-    # 根据选择渲染对应视图
-    if st.session_state._active_view == "stock_detail":
-        render_stock_detail(df_res)
-    elif st.session_state._active_view == "history":
-        render_history_table(df_hist, df_res)
-    else:
-        render_list_view(df_res, label_filter=st.session_state._active_view)
+    st.markdown(f"""
+    <button class="back-to-top" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="回到顶部">↑</button>
+    """, unsafe_allow_html=True)
 
-    # === 回到顶部浮钮 ===
+
+def render_individual(df_res: pd.DataFrame, df_hist: pd.DataFrame):
+    """顶层 Tab 【📈 个股分析】: 搜索 + K线 + 指标条"""
+    st.markdown(
+        f'<div style="color:{TEXT_MUTED};font-size:13px;margin-bottom:8px;">'
+        f'<b>📈 个股分析</b> · ETF K线 + 算法指标'
+        f'<span style="color:{TEXT_DIM};font-size:10px;margin-left:8px;">'
+        f'代码 / 名称 搜索 · 点「分析」加载 K 线</span></div>',
+        unsafe_allow_html=True,
+    )
+    render_stock_detail(df_res)
+
     st.markdown(f"""
     <button class="back-to-top" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="回到顶部">↑</button>
     """, unsafe_allow_html=True)
