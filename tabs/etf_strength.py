@@ -528,9 +528,6 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
 
     业务上接 6 档 Δpp，今天最强的资金动向和最狠的流出用一句换一句话讲完。
     """
-    import io as _io
-    from datetime import datetime as _dt
-
     total_size = df_res["fund_size_yi"].sum() if "fund_size_yi" in df_res.columns else 0
     today = {}
     for label in LABEL_ORDER:
@@ -594,25 +591,7 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         f'</div>'
     )
 
-    # 生成 CSV
-    buf = _io.StringIO()
-    buf.write(f"#asof_date={df_res['asof_date'].iloc[0] if 'asof_date' in df_res.columns else '?'}\n")
-    df_res.to_csv(buf, index=False)
-    csv_bytes = buf.getvalue().encode("utf-8")
-    fname = f"etf_strength_{_dt.now().strftime('%Y%m%d_%H%M')}.csv"
-
-    col_banner, col_btn = st.columns([5, 1])
-    with col_banner:
-        st.markdown(banner_html, unsafe_allow_html=True)
-    with col_btn:
-        st.download_button(
-            "⬇️ 导出 CSV",
-            data=csv_bytes,
-            file_name=fname,
-            mime="text/csv",
-            use_container_width=True,
-            key="csv_download_overview",
-        )
+    st.markdown(banner_html, unsafe_allow_html=True)
 
 
 def render_kpi(df: pd.DataFrame, df_hist: pd.DataFrame | None = None):
