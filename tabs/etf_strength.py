@@ -171,7 +171,7 @@ def render_table(df: pd.DataFrame):
     st.markdown(
         f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:4px;'
         f'display:flex;align-items:center;gap:8px;">'
-        f'<span>共 <b style="color:{TEXT};">{len(show)}</b> 只 · 按趋势强度排序</span>'
+        f'<span>共 <b style="color:{TEXT};">{len(show)}</b> 只 · 点击表头排序 · 输关键词过滤</span>'
         f'<input type="search" id="etf_search_{id(df)}" placeholder="🔍 过滤代码/名称/趋势" '
         f'style="margin-left:auto;background:{BG_PANEL};color:{TEXT};border:1px solid {BORDER};'
         f'border-radius:4px;padding:2px 8px;font-size:11px;width:240px;outline:none;" '
@@ -213,6 +213,54 @@ def render_table(df: pd.DataFrame):
       input.addEventListener('keydown', function(e){{
         if (e.key === 'Escape') {{ input.value = ''; apply(); }}
       }});
+
+      // === 表头点击排序 ===
+      // 把初始 th 的原始内容寫到 dataset.label,这样排序时 label 不会被丢掉
+      var ths = wrap.querySelectorAll('thead th');
+      ths.forEach(function(th, idx){{
+        if (!th.dataset.label) th.dataset.label = th.textContent.trim();
+        th.dataset.colIdx = idx;
+        th.addEventListener('click', function(){{
+          var dir;
+          if (th.classList.contains('sort-asc')) {{
+            dir = 'desc'; th.classList.remove('sort-asc'); th.classList.add('sort-desc');
+          }} else if (th.classList.contains('sort-desc')) {{
+            th.classList.remove('sort-desc');
+            th.textContent = th.dataset.label; dir = null;
+          }} else {{
+            // 清除同辈的排序状态
+            ths.forEach(function(o){{
+              if (o !== th) {{ o.classList.remove('sort-asc'); o.classList.remove('sort-desc'); }}
+            }});
+            th.classList.add('sort-asc'); dir = 'asc';
+          }}
+          if (dir) th.textContent = th.dataset.label; else th.textContent = th.dataset.label;
+          var tbody = wrap.querySelector('tbody');
+          var rowsArr = Array.prototype.slice.call(rows);
+          if (dir) {{
+            rowsArr.sort(function(a,b){{
+              var av = a.children[idx].textContent.trim();
+              var bv = b.children[idx].textContent.trim();
+              // 尝试按数字排序(去掉千分位/亿/万等单位后缀)
+              var an = parseFloat(av.replace(/[^\\d.\\-]/g, ''));
+              var bn = parseFloat(bv.replace(/[^\\d.\\-]/g, ''));
+              var isNum = !isNaN(an) && !isNaN(bn) && /[\\d.]/.test(av) && /[\\d.]/.test(bv);
+              if (isNum) return dir === 'asc' ? an - bn : bn - an;
+              return dir === 'asc' ? av.localeCompare(bv, 'zh-CN') : bv.localeCompare(av, 'zh-CN');
+            }});
+            rowsArr.forEach(function(r){{ tbody.appendChild(r); }});
+          }} else {{
+            // 复位到初始顺序（重读原 DOM）
+            rowsArr.sort(function(a,b){{
+              return (parseInt(a.dataset.origIdx||0) - parseInt(b.dataset.origIdx||0));
+            }});
+            rowsArr.forEach(function(r){{ tbody.appendChild(r); }});
+          }}
+          apply();  // 重排后重新应用过滤
+        }});
+      }});
+      // 保存原始顺序
+      rows.forEach(function(r,i){{ r.dataset.origIdx = i; }});
     }})();
     </script>
     """, unsafe_allow_html=True)
@@ -237,7 +285,12 @@ def render_table(df: pd.DataFrame):
         border-bottom: 1px solid {BORDER}; text-transform: uppercase;
         letter-spacing: 0.8px; white-space: nowrap;
         position: sticky; top: 0; z-index: 1;
+        cursor: pointer; user-select: none;
+        transition: background 0.15s, color 0.15s;
       }}
+      .etf-table th:hover {{ background: {BORDER}; color: {TEXT}; }}
+      .etf-table th.sort-asc::after  {{ content: ' ▲'; color: {ACCENT_UP}; }}
+      .etf-table th.sort-desc::after {{ content: ' ▼'; color: {ACCENT_DN}; }}
       .etf-table th:nth-child(2),
       .etf-table th:nth-child(3) {{ min-width: 80px; }}
       .etf-table th:last-child {{ text-align: right; }}
@@ -470,6 +523,98 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
         render_table(df_view)
 
 
+def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
+    """KPI 卡下面一行「🚨 板块异动」横幅 + 「⬇️ 导出 CSV」按钮
+
+    业务上接 6 档 Δpp，今天最强的资金动向和最狠的流出用一句换一句话讲完。
+    """
+    import io as _io
+    from datetime import datetime as _dt
+
+    total_size = df_res["fund_size_yi"].sum() if "fund_size_yi" in df_res.columns else 0
+    today = {}
+    for label in LABEL_ORDER:
+        sub = df_res[df_res["strength_label"] == label]
+        today[label] = sub["fund_size_yi"].sum() if "fund_size_yi" in sub.columns else 0
+
+    # 昨日同一档位资金占比
+    prev_pct = {}
+    if df_hist is not None and not df_hist.empty and total_size > 0:
+        try:
+            points = [c for c in df_hist.columns if c not in ("code", "name")]
+            if len(points) >= 2:
+                prev_point = points[-2]
+                size_map = dict(zip(df_res["code"].astype(str), df_res["fund_size_yi"]))
+                prev_total = 0.0
+                for lbl in LABEL_ORDER:
+                    cnt_df = df_hist[df_hist[prev_point] == lbl]
+                    s = sum(float(size_map.get(str(r["code"]), 0) or 0) for _, r in cnt_df.iterrows())
+                    prev_pct[lbl] = s
+                    prev_total += s
+                if prev_total > 0:
+                    prev_pct = {k: v / prev_total * 100 for k, v in prev_pct.items()}
+        except Exception:
+            prev_pct = {}
+
+    diffs = []
+    for label in LABEL_ORDER:
+        cur_pct = (today[label] / total_size * 100) if total_size else 0
+        pp = cur_pct - prev_pct.get(label, 0)
+        if pp != 0:
+            diffs.append((label, pp, cur_pct))
+    diffs.sort(key=lambda x: x[1])
+    if not diffs:
+        return
+    top_in = diffs[-1]   # 净流入最多
+    top_out = diffs[0]   # 净流出最多
+
+    def _chip(label, pp):
+        ls = LABEL_STYLES.get(label)
+        fg = ls["glow"] if ls else TEXT
+        sign = "+" if pp > 0 else ""
+        return (
+            f'<span style="background:{fg}22;color:{fg};'
+            f'padding:1px 8px;border-radius:10px;'
+            f'font-size:11px;font-weight:600;margin-right:6px;">'
+            f'{label}{sign}{pp:.1f}pp</span>'
+        )
+
+    banner_html = (
+        f'<div style="display:flex;align-items:center;gap:12px;margin-top:8px;'
+        f'background:linear-gradient(90deg,rgba(255,77,79,0.06),rgba(34,197,94,0.06));'
+        f'border:1px solid {BORDER};border-radius:6px;padding:8px 12px;">'
+        f'<span style="font-size:13px;">🚨 <b style="color:{TEXT};">板块异动</b></span>'
+        f'<span style="color:{TEXT_DIM};font-size:11px;">'
+        f'<span style="color:{ACCENT_UP};font-weight:600;">资金流入</span> '
+        f'{_chip(top_in[0], top_in[1])} '
+        f'<span style="color:{TEXT_DIM};">·</span> '
+        f'<span style="color:{ACCENT_DN};font-weight:600;">资金流出</span> '
+        f'{_chip(top_out[0], top_out[1])}'
+        f'</span>'
+        f'</div>'
+    )
+
+    # 生成 CSV
+    buf = _io.StringIO()
+    buf.write(f"#asof_date={df_res['asof_date'].iloc[0] if 'asof_date' in df_res.columns else '?'}\n")
+    df_res.to_csv(buf, index=False)
+    csv_bytes = buf.getvalue().encode("utf-8")
+    fname = f"etf_strength_{_dt.now().strftime('%Y%m%d_%H%M')}.csv"
+
+    col_banner, col_btn = st.columns([5, 1])
+    with col_banner:
+        st.markdown(banner_html, unsafe_allow_html=True)
+    with col_btn:
+        st.download_button(
+            "⬇️ 导出 CSV",
+            data=csv_bytes,
+            file_name=fname,
+            mime="text/csv",
+            use_container_width=True,
+            key="csv_download_overview",
+        )
+
+
 def render_kpi(df: pd.DataFrame, df_hist: pd.DataFrame | None = None):
     """ETF 强弱趋势 Tab 专属 KPI:标的池 + 6 档趋势分布
 
@@ -527,7 +672,7 @@ def render_kpi(df: pd.DataFrame, df_hist: pd.DataFrame | None = None):
         }}
       }}
       /* KPI 列间距+7列flex均匀分布 */
-      .row-widget.stHorizontal {{ gap: 3px !important; }}
+      .row-widget.stHorizontal {{ gap: 8px !important; }}
       .row-widget.stHorizontal > div {{ flex: 1 1 0 !important; min-width: 0 !important; }}
       /* radio 横向滚动(防换行) */
       div[data-testid="stRadio"] > div {{
@@ -840,6 +985,8 @@ def _subview_radio(view_keys, view_labels, state_key, default_idx=0):
 def render_overview(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     """顶层 Tab 【📊 大盘总览】: KPI + 6 档分类子视图(股票详情 / 趋势演变 / 6档列表)"""
     render_kpi(df_res, df_hist)
+    # 🚨 板块异动横幅 + 下载按钮 工具行
+    _render_anomaly_banner(df_res, df_hist)
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
 
     icons = {

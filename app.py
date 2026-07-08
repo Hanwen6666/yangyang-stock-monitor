@@ -232,18 +232,22 @@ def main():
     render_header(df_res if not is_empty else pd.DataFrame(), st.session_state.refresh_state)
 
     # 单按钮:点一下 → API 拉 history + v27 本地重算 + 进度条
+    if "_refreshing" not in st.session_state:
+        st.session_state._refreshing = False
     btn_col, info_col = st.columns([1, 9])
     with btn_col:
         clicked = st.button(
-            "🔄 数据刷新",
+            "🚧 刷新中..." if st.session_state._refreshing else "🔄 数据刷新",
             help="先拉最新趋势历史,再用 v27 算法重算当前指标(约 2 分钟)",
             use_container_width=True,
             type="primary",
+            disabled=st.session_state._refreshing,
         )
     with info_col:
         rs = st.session_state.refresh_state
         if clicked:
             t_start = time.time()
+            st.session_state._refreshing = True
             progress = st.progress(0, text="拉取趋势历史...")
 
             # === Step 1: 拉 API 数据(秒级) ===
@@ -251,6 +255,7 @@ def main():
             if not api_res["ok"]:
                 progress.empty()
                 st.error(f"拉取数据失败: {api_res['error']}")
+                st.session_state._refreshing = False
                 st.stop()
 
             progress.progress(15, text="趋势历史已就绪,本地 v27 重算...")
@@ -267,6 +272,7 @@ def main():
             except Exception as e:
                 progress.empty()
                 st.error(f"本地重算失败: {e}")
+                st.session_state._refreshing = False
                 st.stop()
 
             progress.progress(100, text="完成")
@@ -299,6 +305,7 @@ def main():
             # 既保住个股分析 tab 的搜索/选择状态,也能继续显示「上次刷新」灰条。
             # —— refresh 完成后再渲染一次 header(带上新数据日期) + 喂新数据给 tabs。
             render_header(df_res, final)
+            st.session_state._refreshing = False  # 恢复按钮
         # else: 「上次刷新」状态现在永久显示在 render_header 里了，不需要再这里重复
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
