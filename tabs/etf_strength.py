@@ -294,14 +294,21 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
     _sel_dates_tuple = tuple(selected_points)
     _lbl_filter_list = []  # 不再趋势筛选
 
-    html_body, n_etf, n_days = _build_history_html(
-        df_hist, _pts_tuple, df_res, _sel_dates_tuple, _lbl_filter_list
-    )
+    # 首次拼 207×25=5175 个 span 会~1秒，加 spinner + 准迟避免闪屏
+    import time
+    t0 = time.time()
+    with st.spinner(f"拼装 {len(df_hist)}×{len(selected_points)} 趋势矩阵..."):
+        html_body, n_etf, n_days = _build_history_html(
+            df_hist, _pts_tuple, df_res, _sel_dates_tuple, _lbl_filter_list
+        )
+    render_ms = int((time.time() - t0) * 1000)
 
     st.markdown(
         f'<div style="color:{TEXT_DIM};font-size:11px;margin-bottom:6px;'
         f'display:flex;justify-content:space-between;align-items:center;">'
-        f'<span style="font-weight:500;">共 {n_etf} 只 · {n_days} 天</span>'
+        f'<span style="font-weight:500;">共 {n_etf} 只 · {n_days} 天 '
+        f'<span style="color:{TEXT_DIM};font-size:10px;margin-left:6px;">'
+        f'拼装 {render_ms}ms</span></span>'
         f'<span style="font-size:11px;letter-spacing:0.3px;">'
         f'<span style="background:#ff1a3d;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">超强势</span> '
         f'<span style="background:#ff6b00;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">强势</span> '
@@ -605,7 +612,11 @@ def _slope_color_fn(v):
 
 
 def render_stock_detail(df_res: pd.DataFrame):
-    """个股 ETF 分析子视图 - 东财风格"""
+    """个股 ETF 分析子视图 - 东财风格
+
+    跨顶层 Tab 切换时,搜索词 / 分析结果都会被 session_state 冱底保留,
+    用户从大盘总览切出去再切回来还能看到上次看的 K 线图。
+    """
     st.markdown(f'<div style="margin-bottom:8px;"></div>', unsafe_allow_html=True)
 
     # 搜索栏
@@ -615,22 +626,54 @@ def render_stock_detail(df_res: pd.DataFrame):
         n = str(r.get("name", ""))
         search_items.append(f"{c} {n}")
 
+    # 🔧 修复：跨顶层 Tab 切换后 widget key 会丢，用 session_state 离冱
+    # 初始化选中状态
+    if "stock_detail_selected" not in st.session_state:
+        st.session_state.stock_detail_selected = None
+    if "stock_detail_analysed" not in st.session_state:
+        st.session_state.stock_detail_analysed = False
+    if "stock_detail_analysed_code" not in st.session_state:
+        st.session_state.stock_detail_analysed_code = None
+
     c1, c2 = st.columns([3, 1])
     with c1:
+        # selectbox 的 index 从 session_state 反查，跨 Tab 后保留
+        _cur_label = st.session_state.stock_detail_selected
+        _cur_idx = search_items.index(_cur_label) if _cur_label in search_items else None
         selected = st.selectbox(
-            "", search_items, index=None,
+            "", search_items,
+            index=_cur_idx,
             placeholder="输入代码或中文名称搜索...",
             label_visibility="collapsed",
             key="stock_detail_search",
         )
+        # 回到顶部后会丢，事后同步回去
+        if selected:
+            st.session_state.stock_detail_selected = selected
     with c2:
-        go_btn = st.button("🔍 分析", use_container_width=True, type="primary", key="stock_detail_go")
+        go_btn = st.button(
+            "🔍 分析",
+            use_container_width=True,
+            type="primary",
+            key="stock_detail_go",
+        )
 
-    # 用 session_state 跟踪是否已分析,避免缓存冲突导致其他 tab 内容混入
-    if "stock_detail_analysed" not in st.session_state:
-        st.session_state.stock_detail_analysed = False
+    # 用户未首次点击「分析」且 session_state 中有最近看过的 code —— 自动恢复
+    if not go_btn and not st.session_state.stock_detail_analysed:
+        st.markdown(
+            f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
+            f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
+            f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
+            unsafe_allow_html=True,
+        )
+        st.text_input("_stock_detail_hidden", label_visibility="collapsed", disabled=True, key="_hidden_widget")
+        return
 
+    # 若 session_state 中存了上次分析的 code,可以跨 Tab 恢复
+    if not selected and st.session_state.stock_detail_analysed_code:
+        selected = st.session_state.stock_detail_analysed_code
     if not selected or not go_btn:
+        # 未点击「分析」 && session 也没缓存 code  —— 占位提示
         st.session_state.stock_detail_analysed = False
         st.markdown(
             f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
@@ -638,9 +681,13 @@ def render_stock_detail(df_res: pd.DataFrame):
             f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
             unsafe_allow_html=True,
         )
-        # 放置一个隐式widget确保本tab有交互组件,防止Streamlit将后续tab的widget归属到本tab
         st.text_input("_stock_detail_hidden", label_visibility="collapsed", disabled=True, key="_hidden_widget")
         return
+
+    st.session_state.stock_detail_analysed = True
+    st.session_state.stock_detail_analysed_code = selected  # 冱底
+    # 每次点分析都滚动到 K 线图
+    _scroll_after_render = True
 
     st.session_state.stock_detail_analysed = True
     # 每次点分析都滚动到 K 线图(不靠"首次"那个不可靠的标志位)
