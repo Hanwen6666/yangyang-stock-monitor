@@ -18,16 +18,18 @@ ACCENT_UP   = "#ff4d4f"
 ACCENT_DN   = "#22c55e"
 
 # ============================================================
-# 趋势分类颜色(6 档)
+# 趋势分类颜色(6 档 · 大厂质感色)
 # ============================================================
-LABEL_COLORS = {
-    "超强势":   ("#ff3b5c", "#ffffff"),
-    "强势":     ("#ff7800", "#ffffff"),
-    "震荡上涨": ("#ffcc00", "#0a0e1a"),
-    "横盘震荡": ("#3a4156", "#c5c8d6"),
-    "震荡下跌": ("#4a90d9", "#ffffff"),
-    "一直下跌": ("#1f3556", "#7a8aa8"),
+# 每对: (背景色, 文字色, 背景渐变色, 光晕/图标色)
+LABEL_STYLES = {
+    "超强势":   {"bg": "#ff1a3d", "fg": "#ffffff", "gradient": "linear-gradient(135deg,#ff1a3d,#d4142a)", "glow": "#ff4757"},
+    "强势":     {"bg": "#ff6b00", "fg": "#ffffff", "gradient": "linear-gradient(135deg,#ff6b00,#e05500)", "glow": "#ff8533"},
+    "震荡上涨": {"bg": "#ffc107", "fg": "#0a0e1a", "gradient": "linear-gradient(135deg,#ffc107,#f5a623)", "glow": "#ffd54f"},
+    "横盘震荡": {"bg": "#2a334a", "fg": "#c5c8d6", "gradient": "linear-gradient(135deg,#2a334a,#1f2638)", "glow": "#3a4156"},
+    "震荡下跌": {"bg": "#3a7bd5", "fg": "#ffffff", "gradient": "linear-gradient(135deg,#3a7bd5,#2a5db0)", "glow": "#5b93e0"},
+    "一直下跌": {"bg": "#1c2538", "fg": "#9aaaC0", "gradient": "linear-gradient(135deg,#1c2538,#121925)", "glow": "#2a3450"},
 }
+LABEL_COLORS = {k: (v["bg"], v["fg"]) for k, v in LABEL_STYLES.items()}
 LABEL_ORDER = ["超强势", "强势", "震荡上涨", "横盘震荡", "震荡下跌", "一直下跌"]
 
 # 缩略映射(紧凑色块用)
@@ -73,3 +75,49 @@ def classify_name(name: str) -> str:
         if re.search(pattern, name):
             return cat
     return "其他"
+
+
+# ============================================================
+# UI 常量：字号 / 间距 / 高度
+# ============================================================
+
+# K线图
+CHART_KLINE_HEIGHT = 620        # st.components.v1.html 高度
+CHART_KLINE_INNER_HEIGHT = 500  # lightweight-charts canvas 高度
+KLINE_BAR_SPACING = 10          # 柱间距(像素)
+KLINE_VISIBLE_BARS = 60         # 默认聚焦最近 N 根
+
+# Y 轴布局
+KLINE_PRICE_TOP_MARGIN = 0.08   # 主图顶部留白
+KLINE_PRICE_BOTTOM_MARGIN = 0.32  # 主图底部留白 (给成交量 28%)
+KLINE_VOLUME_TOP_MARGIN = 0.72  # 成交量顶部位置
+KLINE_VOLUME_BOTTOM_MARGIN = 0  # 成交量贴底
+
+# 均线颜色
+MA_COLORS = {
+    5:  "#f59e0b",   # 黄
+    10: "#60a5fa",   # 蓝
+    20: "#a78bfa",   # 紫
+    60: "#f87171",   # 红
+}
+
+# K线主轴价位
+KLINE_UP_COLOR = "#ef4444"      # 涨红
+KLINE_DOWN_COLOR = "#22c55e"    # 跌绿
+
+# 字号
+FONT_KPI_TITLE = 9
+FONT_KPI_VALUE = 18
+FONT_KPI_SUB = 9
+FONT_METRIC_TITLE = 9
+FONT_METRIC_VALUE = 13
+FONT_LEGEND = 9
+
+# 间距
+SPACING_XS = "4px"
+SPACING_SM = "6px"
+SPACING_MD = "8px"
+SPACING_LG = "12px"
+
+# 表格 KPI 卡
+KPI_CARD_HEIGHT = "66px"

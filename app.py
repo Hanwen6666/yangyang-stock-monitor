@@ -108,7 +108,6 @@ st.markdown(f"""
 # 数据加载
 # ============================================================
 DATA_DIR = Path(__file__).parent / "data"
-ASOF_FILE = DATA_DIR / ".asof"
 
 @st.cache_data(ttl=300)
 def load_results() -> pd.DataFrame:
@@ -117,7 +116,7 @@ def load_results() -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.read_csv(p)
     # 兼容旧 CSV 缺少 latest_close/latest_volume 字段
-    for col in ["latest_close", "latest_volume", "fund_size_yi", "latest_amount"]:
+    for col in ["latest_close", "latest_volume", "fund_size_yi", "latest_amount", "strength_label"]:
         if col not in df.columns:
             df[col] = 0
     return df
@@ -155,26 +154,23 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
             last_fetch_html = f'<span style="color:{TEXT_DIM};font-size:11px;">刷新 {fa}</span>'
 
     header_html = (
-        '<div style="display:flex;align-items:center;gap:16px;margin-bottom:4px;'
-        f'padding-bottom:14px;border-bottom:1px solid {BORDER};">'
-      '<div style="display:flex;align-items:baseline;gap:10px;">'
-        '<h1 style="margin:0;font-size:24px;font-weight:700;'
-             f'color:{TEXT};letter-spacing:-0.5px;">羊羊股市监测</h1>'
-        '<span style="color:{TEXT_DIM};font-size:12px;font-weight:400;'
-              'letter-spacing:0.5px;margin-left:4px;">A 股 ETF · 趋势分析</span>'
+        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:2px;'
+        f'padding-bottom:10px;border-bottom:1px solid {BORDER};">'
+      '<div style="display:flex;align-items:baseline;gap:6px;">'
+        '<span style="margin:0;font-size:18px;font-weight:700;'
+             f'color:{TEXT};letter-spacing:-0.3px;">🐑 羊羊股市监测</span>'
+        '<span style="color:{TEXT_DIM};font-size:11px;font-weight:400;">A股ETF·趋势分析</span>'
       '</div>'
-      '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">'
-        '<div style="display:flex;align-items:center;gap:8px;'
-             f'background:{BG_PANEL};border:1px solid {BORDER};'
-             'border-radius:6px;padding:5px 12px;">'
-          f'<span style="color:{TEXT_DIM};font-size:11px;">数据日期</span>'
-          f'<span style="color:{TEXT};font-size:12px;font-weight:600;font-family:monospace;">{asof_str}</span>'
+      '<div style="margin-left:auto;display:flex;align-items:center;gap:6px;'
+           f'background:{BG_PANEL};border:1px solid {BORDER};'
+           'border-radius:6px;padding:4px 10px;">'
+          f'<span style="color:{TEXT_DIM};font-size:10px;">数据</span>'
+          f'<span style="color:{TEXT};font-size:11px;font-weight:600;font-family:monospace;">{asof_str}</span>'
           + (f'<span style="color:{BORDER_HI};">|</span>'
-             f'<span style="color:{TEXT_DIM};font-size:11px;">标的池</span>'
-             f'<span style="color:{ACCENT_UP};font-size:12px;font-weight:600;font-family:monospace;">{n}</span>'
+             f'<span style="color:{TEXT_DIM};font-size:10px;">池</span>'
+             f'<span style="color:{ACCENT_UP};font-size:11px;font-weight:600;font-family:monospace;">{n}</span>'
              if n is not None else '')
           + last_fetch_html +
-        '</div>'
       '</div>'
     '</div>'
     )
@@ -281,8 +277,11 @@ def main():
                 label = "⚠️ 本地失败,回退 API 快照"
 
             st.session_state.refresh_state = final
+            # 清缓存,让下方 render_all_tabs 拉到新数据
             load_results.clear()
             load_history.clear()
+            df_res = load_results()
+            df_hist = load_history()
 
             elapsed = int((time.time() - t_start) * 1000)
             st.toast(
@@ -291,7 +290,10 @@ def main():
                 + "天 · " + str(elapsed) + "ms",
                 icon="📊",
             )
-            st.rerun()
+            # 不再 st.rerun(): 让当前执行流继续往下跑 render_all_tabs,
+            # 既保住个股分析 tab 的搜索/选择状态,也能继续显示「上次刷新」灰条。
+            # —— refresh 完成后再渲染一次 header(带上新数据日期) + 喂新数据给 tabs。
+            render_header(df_res, final)
         elif rs:
             # 显示上次刷新状态
             fa = rs["fetched_at"].split("T")[1].split(".")[0] if "T" in rs["fetched_at"] else rs["fetched_at"]
@@ -310,6 +312,7 @@ def main():
     # 路由所有 Tab
     # 各 Tab 内部决定是否要展示自己的 KPI(例如 ETF 强弱 Tab 会在内部显示标的池/趋势分布)
     render_all_tabs(df_res, df_hist)
+
 
     st.markdown(f"""
     <div style="margin-top:32px;padding-top:12px;border-top:1px solid {BORDER};

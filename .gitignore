@@ -2,6 +2,7 @@
 data/results.csv
 data/etf_trend_history.csv
 data/.asof
+data/.kline_cache/   # K 线 pickle 本地缓存
 
 __pycache__/
 *.pyc

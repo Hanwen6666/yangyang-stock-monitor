@@ -9,8 +9,8 @@ ETF 强弱趋势分析 Tab
 """
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 from pathlib import Path
+
 
 # 复用共享常量 + algorithm
 import sys
@@ -18,21 +18,86 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from lib.constants import (  # noqa: E402
     BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
-    LABEL_COLORS, LABEL_ORDER, SHORT_MAP,
+    LABEL_COLORS, LABEL_ORDER, LABEL_STYLES, SHORT_MAP,
+    CHART_KLINE_HEIGHT,
 )
 from lib import algorithm as algo
+from lib.chart_kline import _kline_chart_html
+from lib.ui_components import label_badge_html, kpi_card, metric_row_html
 
 
-def label_badge_html(label: str) -> str:
-    bg, fg = LABEL_COLORS.get(label, ("#3a4156", "#fff"))
-    return (
-        f'<span style="'
-        f'background:{bg};color:{fg};'
-        f'padding:3px 10px;border-radius:4px;'
-        f'font-size:11px;font-weight:600;'
-        f'letter-spacing:0.5px;display:inline-block;'
-        f'white-space:nowrap;">{label}</span>'
-    )
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_fetch_kline(code: str, min_len: int):
+    """缓存 K 线数据(优先腾讯快照,更稳定),避免跨 tab 切换重复拉取卡死"""
+    try:
+        k = algo.fetch_kline_tencent(code)
+        if k is not None and len(k) >= 120:
+            return k
+    except Exception:
+        pass
+    k = algo.fetch_kline(code, min_len)
+    return k
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_fetch_amount(code: str):
+    """成交额缓存,避免每次进入个股分析重复拉取"""
+    return algo.fetch_amount(code)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _prepare_list_view(df_res: pd.DataFrame, label_filter: str | None,
+                        cat_filter_tuple=()):
+    """缓存列表视图的筛选+排序,避免 segmented_control 切换时重复计算。
+
+    cat_filter_tuple 为 tuple(不可变 list),以安全作为 cache key。
+    """
+    if label_filter is not None:
+        df_view = df_res[df_res["strength_label"] == label_filter].copy()
+    else:
+        df_view = df_res.copy()
+    if cat_filter_tuple:
+        df_view = df_view[df_view["category"].isin(list(cat_filter_tuple))]
+    df_view = sort_df(df_view, "strength_label", "desc")
+    return df_view
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _build_history_html(df_hist: pd.DataFrame, points_tuple, df_res: pd.DataFrame,
+                         selected_dates_tuple, label_filter_list):
+    """缓存趋势演变 HTML,避免 radio 切换时重复构建 207×N 个色块。
+    直接以 DataFrame 为入参 -- 当数据真的变了会自然重新计算。"""
+    points = list(points_tuple)
+    selected_dates = list(selected_dates_tuple)
+
+    df = df_hist.copy()
+    if label_filter_list:
+        latest_point = points[-1]
+        df = df[df[latest_point].isin(label_filter_list)]
+
+    # 日期格式
+    col_rename = {}
+    for p in selected_dates:
+        if "_" in p:
+            raw = p.split("_")[1][:10]
+            col_rename[p] = raw[5:10] if len(raw) >= 10 else raw
+        else:
+            col_rename[p] = p
+
+    show = df[["code", "name"] + selected_dates].copy()
+    show = show.rename(columns={"code": "代码", "name": "名称"})
+    show = show.rename(columns=col_rename)
+    date_cols = [c for c in col_rename.values() if c in show.columns]
+
+    for p, disp in col_rename.items():
+        if disp in show.columns:
+            show[disp] = show[disp].apply(_compact_cell_html)
+
+    base_cols = ["代码", "名称"]
+    show = show[base_cols + date_cols]
+
+    html_body = show.to_html(escape=False, index=False, border=0, classes="compact-table")
+    return html_body, len(df), len(date_cols)
 
 
 def sort_df(df: pd.DataFrame, sort_by: str = "strength_label", sort_dir: str = "desc") -> pd.DataFrame:
@@ -68,11 +133,11 @@ def render_table(df: pd.DataFrame):
 
     # 格式化
     def fmt_price(v):
-        if pd.isna(v) or float(v) == 0: return "—"
+        if pd.isna(v) or float(v) == 0: return "-"
         return f"{float(v):.3f}"
 
     def fmt_vol(v):
-        if pd.isna(v) or float(v) == 0: return "—"
+        if pd.isna(v) or float(v) == 0: return "-"
         vol = float(v)
         if vol >= 1e8:
             return f"{vol/1e8:.1f}亿"
@@ -82,17 +147,17 @@ def render_table(df: pd.DataFrame):
             return f"{int(vol)}"
 
     def fmt_yi(v):
-        if pd.isna(v): return "—"
+        if pd.isna(v): return "-"
         return f"{float(v):.1f}"
 
     if "代码" in show.columns:
-        show["代码"] = show["代码"].apply(lambda v: f"{int(v)}" if pd.notna(v) else "—")
+        show["代码"] = show["代码"].apply(lambda v: f"{int(v)}" if pd.notna(v) else "-")
     if "最新价" in show.columns:
         show["最新价"] = show["最新价"].apply(fmt_price)
     if "成交额(亿)" in show.columns:
         def _fmt_amount(v):
             if pd.isna(v) or float(v) == 0:
-                return "—"
+                return "-"
             yuan = float(v)
             if yuan >= 1e8:
                 return f"{yuan/1e8:.2f}亿"
@@ -136,20 +201,41 @@ def render_table(df: pd.DataFrame):
         letter-spacing: 0.8px; white-space: nowrap;
         position: sticky; top: 0; z-index: 1;
       }}
+      .etf-table th:nth-child(2),
+      .etf-table th:nth-child(3) {{ min-width: 80px; }}
+      .etf-table th:last-child {{ text-align: right; }}
       .etf-table td {{
         padding: 5px 8px; border-bottom: 1px solid #151b2a;
         color: {TEXT}; white-space: nowrap; font-feature-settings: "tnum";
         font-size: 11px;
       }}
+      .etf-table td:nth-child(2) {{ max-width: 220px; overflow: hidden; text-overflow: ellipsis; }}
       .etf-table tr:hover td {{ background: {BG_PANEL_HI}; }}
       .etf-table tr:last-child td {{ border-bottom: none; }}
+      /* 回到顶部浮钮(右下角,避免跟底部 footer 重叠) */
+      .back-to-top {{
+        position:fixed;bottom:60px;right:24px;z-index:1000;
+        width:38px;height:38px;border-radius:50%;
+        background:linear-gradient(135deg,#1e2537,#181e2e);
+        border:1px solid {BORDER_HI};
+        color:{TEXT_DIM};font-size:18px;
+        cursor:pointer;display:flex;align-items:center;justify-content:center;
+        box-shadow:0 4px 12px rgba(0,0,0,0.4);
+        transition:all 0.2s ease;
+      }}
+      .back-to-top:hover {{
+        background:{BG_PANEL_HI};border-color:{TEXT_DIM};
+        color:{TEXT};transform:translateY(-2px);
+      }}
     </style>
     """, unsafe_allow_html=True)
 
 
 def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
-    """趋势演变子视图 — 紧凑色块矩阵
+    """趋势演变子视图 - 紧凑色块矩阵
     列: 代码 / 名称 / [日期色块] (最新→最远)
+
+    简化:去掉筛选区,默认最近 7 天,展示全部 207 只
     """
     if df_hist.empty or df_res.empty:
         st.info("暂无趋势历史数据")
@@ -160,166 +246,151 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
         st.info("无趋势数据点")
         return
 
+    # 默认取最近 7 天(点从最新→最远)
+    default_n = 25
+    date_options_rev = list(reversed(points))
+    selected_points = date_options_rev[:min(default_n, len(date_options_rev))]
     df = df_hist.copy()
 
-    # === 筛选区: 只留日期选择 + 强弱势 ===
-    fc1, fc2 = st.columns([1, 1])
-    with fc1:
-        # 提取所有日期作为选项
-        date_options = [p.split("_")[1][:10] if "_" in p else p for p in points]
-        date_options_short = {}
-        for p, d in zip(points, date_options):
-            if len(d) >= 10:
-                date_options_short[p] = d[5:10]  # "07-03"
-            else:
-                date_options_short[p] = d
-        # 日期筛选:多选,默认选最近20天
-        date_options_rev = list(reversed(points))
-        default_dates = date_options_rev[:min(20, len(date_options_rev))]
-        selected_dates = st.multiselect(
-            "日期", date_options_rev,
-            default=default_dates,
-            format_func=lambda p: date_options_short.get(p, p),
-            placeholder="日期范围",
-            label_visibility="collapsed",
-        )
-    with fc2:
-        # 最新日期的趋势筛选
-        latest_point = points[-1]
-        trend_opts = sorted(df[latest_point].dropna().unique().tolist()) if latest_point in df.columns else []
-        # 保持 LABEL_ORDER 顺序
-        trend_opts = [t for t in LABEL_ORDER if t in trend_opts]
-        label_filter = st.multiselect(
-            "趋势", trend_opts,
-            default=[],
-            placeholder="趋势筛选",
-            label_visibility="collapsed",
-        )
+    # === 构建展示表(缓存加速) ===
+    _pts_tuple = tuple(points)
+    _sel_dates_tuple = tuple(selected_points)
+    _lbl_filter_list = []  # 不再趋势筛选
 
-    # 应用筛选
-    if selected_dates:
-        selected_points = selected_dates
-    else:
-        selected_points = points
-    if label_filter:
-        df = df[df[latest_point].isin(label_filter)]
-
-    if df.empty:
-        st.info("无匹配 ETF")
-        return
-
-    # === 构建展示表 ===
-    points_disp = list(reversed(selected_points))  # 最新在左
-    # 日期格式: "2026-07-03" → "07-03"
-    col_rename = {}
-    for p in points_disp:
-        if "_" in p:
-            raw = p.split("_")[1][:10]
-            if len(raw) >= 10:
-                col_rename[p] = raw[5:10]
-            else:
-                col_rename[p] = raw
-        else:
-            col_rename[p] = p
-
-    show = df[["code", "name"] + [p for p in selected_points if p in df.columns]].copy()
-    show = show.rename(columns={"code": "代码", "name": "名称"})
-    show = show.rename(columns=col_rename)
-    date_cols = [c for c in col_rename.values() if c in show.columns]
-    # 每个日期列 → 紧凑色块
-    for p, disp in col_rename.items():
-        if disp in show.columns:
-            show[disp] = show[disp].apply(_compact_cell_html)
-
-    # 列顺序: 代码 + 名称 + 日期
-    base_cols = ["代码", "名称"]
-    show = show[base_cols + date_cols]
+    html_body, n_etf, n_days = _build_history_html(
+        df_hist, _pts_tuple, df_res, _sel_dates_tuple, _lbl_filter_list
+    )
 
     st.markdown(
-        f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:2px;'
+        f'<div style="color:{TEXT_DIM};font-size:11px;margin-bottom:6px;'
         f'display:flex;justify-content:space-between;align-items:center;">'
-        f'<span>共 {len(show)} 只 · {len(date_cols)} 天</span>'
-        f'<span>🟥超强 🟧强势 🟨涨中 ⬜横盘 🟦跌中 🟫下跌</span>'
+        f'<span style="font-weight:500;">共 {n_etf} 只 · {n_days} 天</span>'
+        f'<span style="font-size:11px;letter-spacing:0.3px;">'
+        f'<span style="background:#ff1a3d;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">超强势</span> '
+        f'<span style="background:#ff6b00;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">强势</span> '
+        f'<span style="background:#ffc107;color:#0a0e1a;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">震荡上涨</span> '
+        f'<span style="background:#2a334a;color:#c5c8d6;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">横盘震荡</span> '
+        f'<span style="background:#3a7bd5;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">震荡下跌</span> '
+        f'<span style="background:#1c2538;color:#9aaac0;padding:1px 6px;border-radius:3px;font-size:10px;">一直下跌</span>'
+        f'</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
         f'<div class="compact-table-wrap">'
-        f'{show.to_html(escape=False, index=False, border=0, classes="compact-table")}'
+        f'{html_body}'
         f'</div>',
         unsafe_allow_html=True,
     )
     st.markdown(f"""
     <style>
       .compact-table-wrap {{
-        max-height: 320px; overflow-y: auto; overflow-x: auto;
-        border-radius: 4px; border: 1px solid {BORDER}; background: {BG_PANEL};
+        max-height: 520px; overflow-y: auto; overflow-x: auto;
+        border-radius: 8px; border: 1px solid {BORDER};
+        background: linear-gradient(180deg,rgba(19,24,38,0.98),rgba(10,14,26,0.98));
+        box-shadow:0 2px 12px rgba(0,0,0,0.3);
       }}
-      .compact-table-wrap::-webkit-scrollbar {{ width: 3px; height: 3px; }}
-      .compact-table-wrap::-webkit-scrollbar-track {{ background: {BG_PANEL}; }}
-      .compact-table-wrap::-webkit-scrollbar-thumb {{ background: {BORDER_HI}; border-radius: 1px; }}
-      .compact-table {{ width: 100%; border-collapse: collapse; }}
+      .compact-table-wrap::-webkit-scrollbar {{ width: 6px; height: 6px; }}
+      .compact-table-wrap::-webkit-scrollbar-track {{ background: transparent; }}
+      .compact-table-wrap::-webkit-scrollbar-thumb {{ background: {BORDER_HI}; border-radius: 3px; }}
+      .compact-table-wrap::-webkit-scrollbar-thumb:hover {{ background: #3a4a6a; }}
+      .compact-table {{ border-collapse: collapse; table-layout: fixed; }}
       .compact-table thead {{ position: sticky; top: 0; z-index: 2; }}
       .compact-table th {{
-        background: {BG_PANEL_HI}; color: {TEXT_DIM};
-        font-weight: 500; font-size: 7px;
-        text-align: center !important; padding: 2px 2px;
+        background: linear-gradient(180deg,#1e2537,#181e2e);
+        color: {TEXT_MUTED};
+        font-weight: 600; font-size: 10px;
+        text-align: center !important; padding: 4px 1px;
         border-bottom: 1px solid {BORDER};
-        text-transform: uppercase; letter-spacing: 0.5px;
+        text-transform: uppercase; letter-spacing: 0.4px;
         white-space: nowrap;
       }}
-      .compact-table th:nth-child(-n+2) {{ text-align: left !important; padding-left: 4px; }}
+      .compact-table th:nth-child(-n+2) {{ text-align: left !important; padding-left: 6px; padding-right: 0 !important; }}
       .compact-table td {{
-        padding: 1px 2px; border-bottom: 1px solid #0f1420;
+        padding: 3px 1px; border-bottom: 1px solid rgba(31,38,56,0.4);
         color: {TEXT}; white-space: nowrap;
-        font-size: 9px; text-align: center;
-        line-height: 1.2;
+        font-size: 11px; text-align: center;
+        line-height: 1.4;
+        overflow: hidden; text-overflow: ellipsis;
       }}
-      .compact-table td:nth-child(-n+2) {{ text-align: left !important; padding-left: 4px; }}
+      .compact-table td:nth-child(-n+2) {{ text-align: left !important; padding-left: 6px; padding-right: 0 !important; font-size: 11px; }}
       .compact-table th:first-child, .compact-table td:first-child {{
-        position: sticky; left: 0; z-index: 3;
-        min-width: 48px;
+        width: 56px !important;
+        padding-right: 4px !important;
       }}
-      .compact-table th:first-child {{ background: #141b2a; z-index: 4; }}
-      .compact-table td:first-child {{ background: #0f141f; }}
-      .compact-table tr:hover td:first-child {{ background: {BG_PANEL_HI}; }}
-      .compact-table tr:hover td {{ background: #141b28; }}
+      .compact-table th:first-child {{ background: linear-gradient(180deg,#1e2537,#181e2e); }}
+      .compact-table td:first-child {{
+        background: rgba(10,14,26,0.85);
+        font-family: 'SF Mono','Fira Code','Consolas',monospace;
+        letter-spacing: 0.2px;
+      }}
+      .compact-table th:nth-child(2),
+      .compact-table td:nth-child(2) {{
+        width: 120px !important;
+        padding-left: 2px !important;
+      }}
+      /* 日期列宽度统一 */
+      .compact-table th:nth-child(n+3),
+      .compact-table td:nth-child(n+3) {{
+        width: 38px !important;
+        padding: 3px 1px !important;
+      }}
+      .compact-table tr:hover td:first-child {{ background: rgba(26,32,48,0.95); }}
+      .compact-table tr:hover td {{ background: rgba(20,24,40,0.6); }}
       .compact-table tr:last-child td {{ border-bottom: none; }}
     </style>
     """, unsafe_allow_html=True)
 
 
 def _compact_cell_html(label: str) -> str:
-    """紧凑色块:只显示缩略文字(2-3字),更小 padding,更紧凑"""
+    """趋势色块 - 大厂质感(渐变底 + 圆角 + 微光晕 + hover title)"""
     if not label or pd.isna(label) or label == "":
-        return '<span style="color:#54586b">—</span>'
-    bg, fg = LABEL_COLORS.get(label, ("#3a4156", "#fff"))
-    short = SHORT_MAP.get(label, label[:2])
+        return '<span style="color:#54586b">-</span>'
+    s = LABEL_STYLES.get(label)
+    if not s:
+        return f'<span title="{label}">{label}</span>'
     return (
-        f'<span style="'
-        f'background:{bg};color:{fg};'
-        f'padding:1px 4px;border-radius:2px;'
-        f'font-size:10px;font-weight:600;'
+        f'<span title="{label}" style="'
+        f'background:{s["gradient"]};color:{s["fg"]};'
+        f'padding:1px 2px;border-radius:3px;'
+        f'font-size:11px;font-weight:600;letter-spacing:0.1px;'
         f'display:inline-block;text-align:center;'
-        f'white-space:nowrap;line-height:1.5;'
-        f'min-width:22px;">{short}</span>'
+        f'white-space:nowrap;line-height:1.55;'
+        f'box-shadow:inset 0 1px 0 rgba(255,255,255,0.15),0 1px 2px rgba(0,0,0,0.3);'
+        f'transition:transform 0.15s ease,box-shadow 0.15s ease;'
+        f'cursor:default;">{label}</span>'
     )
 
 
 def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
-    """详细列表子视图
+    """详细列表子视图 - 含行业分类快速过滤"""
+    # 行业过滤:仅在有 category 列时启用
+    cats = sorted(df_res["category"].dropna().astype(str).unique().tolist()) \
+        if "category" in df_res.columns else []
+    cat_filter: list[str] = []
+    if cats:
+        c1, c2, c3 = st.columns([2, 2, 6])
+        with c1:
+            cat_filter = st.multiselect(
+                "行业", cats, default=[],
+                placeholder="全部行业", label_visibility="collapsed",
+                key=f"cat_filter_{label_filter or 'all'}",
+            )
+        with c2:
+            pass  # 占位 · 后续可加排序方向按钮
+        with c3:
+            if cat_filter:
+                st.markdown(
+                    f'<div style="color:{TEXT_DIM};font-size:10px;padding-top:8px;">'
+                    f'已选行业: <b style="color:{TEXT};">{len(cat_filter)}</b> 个</div>',
+                    unsafe_allow_html=True,
+                )
 
-    Args:
-        df_res: 全部 ETF 数据
-        label_filter: 可选,只展示指定趋势分类(如 "超强势")。None = 全部展示
-    """
-    if label_filter is not None:
-        df_view = df_res[df_res["strength_label"] == label_filter].copy()
-        df_view = sort_df(df_view, "strength_label", "desc")
-        title_extra = f" · {label_filter}"
-    else:
-        df_view = sort_df(df_res, "strength_label", "desc")
-        title_extra = ""
+    df_view = _prepare_list_view(df_res, label_filter, tuple(cat_filter))
+
+    title_extra = f" · {label_filter}" if label_filter else ""
+    if cat_filter:
+        title_extra += f" · {len(cat_filter)}个行业"
 
     c1, c2 = st.columns([1, 3])
     with c1:
@@ -354,43 +425,75 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
         render_table(df_view)
 
 
-def kpi_card(title: str, value: str, sub: str, color: str, hover_color: str | None = None) -> str:
-    """统一 KPI 卡(紧凑版)"""
-    return (
-        f'<div class="kpi-card" '
-        f'style="background:{BG_PANEL};border:1px solid {BORDER};'
-        f'border-radius:8px;padding:8px 10px;height:66px;'
-        f'transition:all 0.15s ease;cursor:default;">'
-        f'<div style="color:{TEXT_MUTED};font-size:9px;font-weight:500;'
-        f'letter-spacing:0.5px;text-transform:uppercase;'
-        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{title}</div>'
-        f'<div class="kpi-value" style="color:{color};font-size:18px;font-weight:700;'
-        f'font-family:monospace;margin-top:2px;line-height:1.15;'
-        f'font-feature-settings:&quot;tnum&quot;;">{value}</div>'
-        f'<div style="color:{TEXT_DIM};font-size:9px;margin-top:1px;'
-        f'font-family:monospace;">{sub}</div>'
-        f'</div>'
-    )
+def render_kpi(df: pd.DataFrame, df_hist: pd.DataFrame | None = None):
+    """ETF 强弱趋势 Tab 专属 KPI:标的池 + 6 档趋势分布
 
-
-def render_kpi(df: pd.DataFrame):
-    """ETF 强弱趋势 Tab 专属 KPI:标的池 + 6 档趋势分布"""
+    每个 KPI 卡 sub字段同时给出:
+      - 只数 + 数量占比
+      - 资金(亿) + 资金占比 + 与昨日同一档位对比的 Δ 箭头
+    df_hist: 趋势演变历史表,用于算昨日同一档位的资金占比 diff.
+             为 None 时不显示 diff。
+    """
     total_size = df["fund_size_yi"].sum() if "fund_size_yi" in df.columns else 0
     n_total = len(df)
+
+    # 昨日同一档位资金占比:从 history CSV 取最后 2 个日期点,只对比同一批 ETF 的趋势历史
+    prev_size_by_label = {}
+    if df_hist is not None and not df_hist.empty and total_size > 0:
+        try:
+            points = [c for c in df_hist.columns if c not in ("code", "name")]
+            if len(points) >= 2:
+                prev_point = points[-2]  # 倒数第二列 = 昨日
+                prev_counts = df_hist[prev_point].value_counts().to_dict()
+                # 按代码映射到 fund_size
+                size_map = dict(zip(df["code"].astype(str), df["fund_size_yi"]))
+                for lbl, cnt in prev_counts.items():
+                    prev_sizes = 0.0
+                    for _, r in df_hist[df_hist[prev_point] == lbl].iterrows():
+                        prev_sizes += float(size_map.get(str(r["code"]), 0) or 0)
+                    prev_size_by_label[lbl] = prev_sizes
+        except Exception:
+            prev_size_by_label = {}
 
     # 注入 KPI 样式
     st.markdown(f"""
     <style>
-      .kpi-card:hover {{
-        background:{BG_PANEL_HI} !important;
-        border-color:{BORDER_HI} !important;
-        transform: translateY(-1px);
+      .kpi-card {{
+        transition: all 0.2s cubic-bezier(0.4,0,0.2,1) !important;
       }}
-      .kpi-card:hover .kpi-value {{
-        filter: brightness(1.2);
+      /* 有鼠标时hover,手机上点击触发active */
+      @media (hover: hover) {{
+        .kpi-card:hover {{
+          background:{BG_PANEL_HI} !important;
+          border-color:{BORDER_HI} !important;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+        }}
+        .kpi-card:hover .kpi-value {{
+          filter: brightness(1.15);
+        }}
       }}
-      /* KPI 列间距压紧 */
-      .row-widget.stHorizontal {{ gap: 4px !important; }}
+      @media (hover: none) {{
+        .kpi-card:active {{
+          background:{BG_PANEL_HI} !important;
+          border-color:{BORDER_HI} !important;
+          transform: scale(0.97);
+          transition: all 0.1s ease !important;
+        }}
+      }}
+      /* KPI 列间距+7列flex均匀分布 */
+      .row-widget.stHorizontal {{ gap: 3px !important; }}
+      .row-widget.stHorizontal > div {{ flex: 1 1 0 !important; min-width: 0 !important; }}
+      /* radio 横向滚动(防换行) */
+      div[data-testid="stRadio"] > div {{
+        display: flex !important; flex-wrap: nowrap !important;
+        overflow-x: auto !important; gap: 2px !important;
+        padding-bottom: 4px; scrollbar-width: thin;
+      }}
+      div[data-testid="stRadio"] label {{
+        flex: 0 0 auto !important; white-space: nowrap !important;
+        padding: 4px 10px !important; font-size: 12px !important;
+      }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -403,25 +506,51 @@ def render_kpi(df: pd.DataFrame):
             f"总规模 {total_size:,.1f} 亿元",
             color=TEXT,
         ), unsafe_allow_html=True)
-    # 6 档趋势
+    # 6 档趋势 - sub 使用 sub_html(资金占比突出 + Δ diff)
     for i, label in enumerate(LABEL_ORDER, start=1):
-        sub = df[df["strength_label"] == label]
-        count = len(sub)
-        size = sub["fund_size_yi"].sum() if "fund_size_yi" in sub.columns else 0
-        pct = count / n_total * 100 if n_total > 0 else 0
-        bg, _ = LABEL_COLORS[label]
+        sub_df = df[df["strength_label"] == label]
+        count = len(sub_df)
+        size = sub_df["fund_size_yi"].sum() if "fund_size_yi" in sub_df.columns else 0
+        pct_count = count / n_total * 100 if n_total > 0 else 0
+        pct_size = (size / total_size * 100) if total_size > 0 else 0
+        ls = LABEL_STYLES.get(label)
+
+        # Δ 资金占比 vs 昨日同档
+        delta_html = ""
+        if prev_size_by_label:
+            prev_total = sum(prev_size_by_label.values())
+            if prev_total > 0:
+                prev_pct = prev_size_by_label.get(label, 0) / prev_total * 100
+                diff = pct_size - prev_pct
+                if abs(diff) >= 0.05:
+                    arrow = "▲" if diff > 0 else "▼"
+                    arrow_color = (ls["glow"] if ls else TEXT) if diff > 0 else "#22c55e"
+                    delta_html = (
+                        f' <span style="color:{arrow_color};font-size:10px;font-weight:600;">'
+                        f'{arrow}{abs(diff):.1f}pp</span>'
+                    )
+
+        rich_sub = (
+            f'{size:,.0f}亿 · '
+            f'<span style="color:{ls["glow"] if ls else TEXT};font-weight:600;">'
+            f'{pct_size:.1f}%资金</span>'
+            f'{delta_html}'
+            f'<span style="color:{TEXT_DIM};font-size:9px;margin-left:4px;">'
+            f'({count}只·{pct_count:.0f}%)</span>'
+        )
         with cols[i]:
             st.markdown(kpi_card(
                 label,
                 f"{count}",
-                f"{size:,.1f} 亿 · {pct:.1f}%",
-                color=bg,
+                sub_html=rich_sub,
+                sub="",  # escape 一个空串,占位
+                color=ls["glow"] if ls else TEXT,
             ), unsafe_allow_html=True)
 
 
 def _fmt_vol(v):
     if v is None or v == 0:
-        return "—"
+        return "-"
     v = float(v)
     if v >= 1e8:
         return f"{v/1e8:.2f}亿"
@@ -437,119 +566,8 @@ def _slope_color_fn(v):
     return ACCENT_UP if v > 0 else ACCENT_DN
 
 
-def _kline_chart_html(kw_250):
-    """东财风格 K 线图:主流+成交量副图(底部色柱)"""
-    close = kw_250["close"].astype(float).values
-    dates = pd.to_datetime(kw_250["date"])
-    vol = kw_250["volume"].astype(float).values if "volume" in kw_250.columns else None
-    o = kw_250["open"].astype(float).values
-    h = kw_250["high"].astype(float).values
-    l = kw_250["low"].astype(float).values
-
-    fig = go.Figure()
-
-    # 成交量柱(在K线下方,独立副轴区域)
-    if vol is not None:
-        vol_colors = ["#ef4444" if close[i] >= o[i] else "#22c55e" for i in range(len(close))]
-        fig.add_trace(go.Bar(
-            x=dates, y=vol, name="成交量",
-            marker_color=vol_colors, opacity=0.5,
-            yaxis="y2",
-        ))
-
-    # K 线
-    fig.add_trace(go.Candlestick(
-        x=dates, open=o, high=h, low=l, close=close,
-        name="",
-        increasing_line_color="#ef4444",
-        decreasing_line_color="#22c55e",
-        line=dict(width=1),
-        whiskerwidth=0,
-    ))
-
-    # MA 均线
-    for n, color, width in [(5, "#f59e0b", 1.0), (20, "#60a5fa", 1.0), (60, "#a78bfa", 0.8)]:
-        if len(close) >= n:
-            ma = pd.Series(close).rolling(n).mean()
-            fig.add_trace(go.Scatter(
-                x=dates, y=ma, mode="lines",
-                name=f"MA{n}", line=dict(color=color, width=width),
-                connectgaps=False,
-            ))
-
-    fig.update_layout(
-        template="plotly_dark",
-        margin=dict(l=0, r=8, t=4, b=0),
-        height=480,
-        xaxis_rangeslider_visible=False,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, size=10),
-        # 主价格轴
-        yaxis=dict(
-            domain=[0.28, 1],
-            anchor="x",
-            side="right",
-            tickformat=".3f",
-            gridcolor="#1f2638", gridwidth=0.5,
-            zeroline=False,
-            title="",
-        ),
-        # 成交量轴(下方 28% 区域)
-        yaxis2=dict(
-            domain=[0, 0.25],
-            anchor="x",
-            side="right",
-            showgrid=False,
-            title="",
-            tickformat=".1s",
-        ),
-        xaxis=dict(
-            gridcolor="#1f2638", gridwidth=0.5,
-            title="",
-            rangeslider_visible=False,
-        ),
-        legend=dict(
-            orientation="h", y=1.02, x=0,
-            font=dict(size=9, color=TEXT_MUTED),
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        hovermode="x unified",
-        hoverlabel=dict(
-            bgcolor="#131826",
-            bordercolor="#2a334a",
-            font=dict(color=TEXT, size=11, family="SF Mono, monospace"),
-        ),
-        dragmode="pan",
-    )
-
-    return fig
-
-
-def _metric_row_html(metrics_list):
-    """东财风格行内指标条"""
-    items = ""
-    for title, value, color in metrics_list:
-        items += f"""
-        <div style="text-align:center;flex:1;min-width:0;
-                    border-right:1px solid #1f2638;padding:0 8px;">
-          <div style="color:{TEXT_DIM};font-size:9px;
-                      text-transform:uppercase;letter-spacing:0.5px;
-                      margin-bottom:2px;">{title}</div>
-          <div style="color:{color};font-size:13px;font-weight:700;
-                      font-family:monospace;">{value}</div>
-        </div>
-        """
-    return f"""
-    <div style="display:flex;background:{BG_PANEL};border:1px solid {BORDER};
-                border-radius:6px;padding:6px 0;margin-bottom:4px;">
-      {items}
-    </div>
-    """
-
-
 def render_stock_detail(df_res: pd.DataFrame):
-    """个股 ETF 分析子视图 — 东财风格"""
+    """个股 ETF 分析子视图 - 东财风格"""
     st.markdown(f'<div style="margin-bottom:8px;"></div>', unsafe_allow_html=True)
 
     # 搜索栏
@@ -579,25 +597,22 @@ def render_stock_detail(df_res: pd.DataFrame):
         st.markdown(
             f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
             f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
-            f'输入 ETF 代码或中文名称搜索后点击分析</div>',
+            f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
             unsafe_allow_html=True,
         )
+        # 放置一个隐式widget确保本tab有交互组件,防止Streamlit将后续tab的widget归属到本tab
+        st.text_input("_stock_detail_hidden", label_visibility="collapsed", disabled=True, key="_hidden_widget")
         return
 
     st.session_state.stock_detail_analysed = True
+    # 每次点分析都滚动到 K 线图(不靠"首次"那个不可靠的标志位)
+    _scroll_after_render = True
 
     code = selected.split()[0].strip().zfill(6)
     etf_name = selected.split(maxsplit=1)[-1] if len(selected.split()) > 1 else ""
 
     with st.spinner(f"获取 {code} {etf_name} K 线数据..."):
-        kline = algo.fetch_kline(code, min_len=250)
-
-        # 降级:如果新浪失败,尝试腾讯源手动拉(带更宽松的 min_len)
-        if kline is None or len(kline) < 120:
-            try:
-                kline = algo.fetch_kline_tencent(code)
-            except Exception:
-                pass
+        kline = _cached_fetch_kline(code, 250)
 
     if kline is None or len(kline) < 100:
         st.error(f"无法获取 {code} 的数据,请检查代码或稍后重试")
@@ -610,6 +625,8 @@ def render_stock_detail(df_res: pd.DataFrame):
         pad_cnt = 250 - len(kw)
         pads = pd.concat([first_row] * pad_cnt, ignore_index=True)
         kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
+    # K线默认显示最近120根(东财风格),250根太挤会变成细线
+    kw_show = kw.iloc[-120:].reset_index(drop=True)
     kw_250 = kw.iloc[-250:].reset_index(drop=True)
     m = algo.calc_single_etf(kw)
     close = kw_250["close"].astype(float).values
@@ -623,15 +640,58 @@ def render_stock_detail(df_res: pd.DataFrame):
 
     # 从 df_res 拿信息
     res_row = df_res[df_res["code"].astype(str).str.zfill(6) == code]
-    category = res_row["category"].iloc[0] if len(res_row) > 0 else "—"
+    category = res_row["category"].iloc[0] if len(res_row) > 0 else "-"
     fund_size = res_row["fund_size_yi"].iloc[0] if len(res_row) > 0 else 0
 
-    # === K 线图(主图+成交量副图) ===
-    fig = _kline_chart_html(kw_250)
-    st.plotly_chart(fig, use_container_width=True, config={
-        "displayModeBar": False,
-        "scrollZoom": True,
-    })
+    # === K 线图(主图+成交量副图,CDN lightweight-charts) ===
+    # 将"今日成交额"插到 kw_show 的最后一根上(历史处仍依赖估算 fallback,
+    # 至少最新一日是真实成交额)
+    kw_show_chart = kw_show.copy()
+    try:
+        if "amount" not in kw_show_chart.columns:
+            kw_show_chart["amount"] = None
+        # 最新一日: 取自 df_res 的 latest_amount,或补拉一次
+        _amt_now = float(_cached_fetch_amount(code) or 0)
+        if _amt_now > 0 and len(kw_show_chart) > 0:
+            kw_show_chart.iloc[-1, kw_show_chart.columns.get_loc("amount")] = _amt_now
+    except Exception:
+        pass
+
+    chart_html = _kline_chart_html(
+        kw_show_chart,
+        amount_series=kw_show_chart["amount"] if "amount" in kw_show_chart.columns else None,
+    )
+    st.components.v1.html(chart_html, height=CHART_KLINE_HEIGHT)
+
+    # 点分析后自动滚动到 K 线图(iframe 渲染后才生效)
+    if _scroll_after_render:
+        # 使用更稳定的锚点选择器 + 三个备选选择器跨 Streamlit 版本
+        scroll_js = """
+<script>
+(function(){
+  function go(){
+    var sels = [
+      'iframe[title*="st.iframe"]',
+      'iframe[title*="streamlit"]',
+      'div[data-testid="stCustomComponentV1"]',
+      'div[data-testid="stMarkdownContainer"]'
+    ];
+    for (var i=0;i<sels.length;i++){
+      var el = document.querySelector(sels[i]);
+      if (el) {
+        // 找到包含 K 线图的最近组件容器,在其上面洨动
+        var target = el.closest('section') || el;
+        target.scrollIntoView({behavior:'smooth', block:'start'});
+        return;
+      }
+    }
+    setTimeout(go, 120);
+  }
+  setTimeout(go, 250);
+})();
+</script>
+"""
+        st.markdown(scroll_js, unsafe_allow_html=True)
 
     # === 指标条(合并为一行,含所有指标) ===
     if m:
@@ -641,21 +701,21 @@ def render_stock_detail(df_res: pd.DataFrame):
             ("最新价", f"{latest_price:.3f}", TEXT),
             ("涨跌幅", "0.00%" if change_pct == 0 else f"{change_pct:+.2f}%",
              ACCENT_UP if direction == "up" else ACCENT_DN),
-            ("成交额", f"{(algo.fetch_amount(code) or 0) / 1e8:.2f}亿", TEXT),
+            ("成交额", f"{(_cached_fetch_amount(code) or 0) / 1e8:.2f}亿", TEXT),
             ("分类", category, TEXT_MUTED),
             ("规模", f"{fund_size:.1f}亿", TEXT),
             ("趋势", m["strength_label"], LABEL_COLORS.get(m["strength_label"], (TEXT, "#fff"))[0]),
-            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] is not None else "—",
+            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] is not None else "-",
              _slope_color_fn(m.get('slope_20'))),
-            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] is not None else "—",
+            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] is not None else "-",
              _slope_color_fn(m.get('slope_50'))),
-            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] is not None else "—",
+            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] is not None else "-",
              _slope_color_fn(m.get('slope_120'))),
-            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] is not None else "—", TEXT),
-            ("ADX", f"{m['adx']:.2f}" if m['adx'] else "—", TEXT),
-            ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] is not None else "—", TEXT),
+            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] is not None else "-", TEXT),
+            ("ADX", f"{m['adx']:.2f}" if m['adx'] else "-", TEXT),
+            ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] is not None else "-", TEXT),
         ]
-        st.markdown(_metric_row_html(metrics), unsafe_allow_html=True)
+        st.markdown(metric_row_html(metrics), unsafe_allow_html=True)
 
 
 
@@ -666,10 +726,9 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     后续如果要把这些子视图升级成独立顶层 Tab,改这里即可
     """
     # KPI 只在 ETF Tab 内显示(其他 Tab 不要标的池/趋势分布这些 ETF 专用指标)
-    render_kpi(df_res)
+    render_kpi(df_res, df_hist)
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
 
-    # 6 个趋势分类子 Tab + 趋势演变 + 个股分析
     icons = {
         "超强势":   "🟥",
         "强势":     "🟧",
@@ -678,29 +737,42 @@ def render(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         "震荡下跌": "🟦",
         "一直下跌": "🟫",
     }
-    labels = (
-        ["📈 个股分析"]
-        + ["🔥 趋势演变"]
-        + [f"{icons.get(l, '')}{l}" for l in LABEL_ORDER]
+    # 8 个子视图: 个股分析 + 趋势演变 + 6 个趋势分类
+    view_keys = ["stock_detail", "history"] + list(LABEL_ORDER)
+    view_labels = ["📈 个股分析", "🔥 趋势演变"]
+    view_labels += [f"{icons.get(l, '')}{l}" for l in LABEL_ORDER]
+
+    # 跨 tab 切换时重置为默认视图(避免个股分析残留卡死)
+    if "_active_view" not in st.session_state or "_tab_reset" not in st.session_state:
+        st.session_state._active_view = view_keys[0]
+        st.session_state._tab_reset = True
+
+    # 导航条: 原生 segmented_control,贴侧滑、胡须、blur 动效都是 Streamlit 自带
+    # key 以顶层 tab 名为前缀·避免跨顶层 tab 切换时 widget 冲突
+    _top_tab_id = "etf_strength"
+    _radio_key = f"view_seg_{_top_tab_id}"
+    # 注意：使用了 segmented_control / pills / segmented_button 这些 1.40+ API 上
+    # cloud 跑 1.39 会 AttributeError,这里统一用 radio + namespace key,
+    # 保留了原本 radio 的横向外观 + 原有 CSS 补丁。
+    _selected = st.radio(
+        "", view_labels,
+        index=view_keys.index(st.session_state._active_view)
+              if st.session_state._active_view in view_keys else 0,
+        horizontal=True, label_visibility="collapsed", key=_radio_key,
     )
-    sub_tabs = st.tabs(labels)
-    # 内层子 Tab 紧凑样式(用更渐进的选择器避免覆盖顶层 Tab)
-    st.markdown(f"""
-    <style>
-      .stTabs .stTabs [data-baseweb="tab-list"] {{
-        gap: 2px !important;
-      }}
-      .stTabs .stTabs [data-baseweb="tab"] {{
-        font-size: 10px !important;
-        padding: 0 8px !important;
-        height: 30px !important;
-      }}
-    </style>
-    """, unsafe_allow_html=True)
-    with sub_tabs[0]:
+    # 映射回 view key
+    if _selected in view_labels:
+        st.session_state._active_view = view_keys[view_labels.index(_selected)]  
+
+    # 根据选择渲染对应视图
+    if st.session_state._active_view == "stock_detail":
         render_stock_detail(df_res)
-    with sub_tabs[1]:
+    elif st.session_state._active_view == "history":
         render_history_table(df_hist, df_res)
-    for i, label in enumerate(LABEL_ORDER):
-        with sub_tabs[i + 2]:
-            render_list_view(df_res, label_filter=label)
+    else:
+        render_list_view(df_res, label_filter=st.session_state._active_view)
+
+    # === 回到顶部浮钮 ===
+    st.markdown(f"""
+    <button class="back-to-top" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="回到顶部">↑</button>
+    """, unsafe_allow_html=True)

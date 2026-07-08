@@ -10,7 +10,7 @@ Tabs 模块 — 业务 Tab 集合
 """
 import streamlit as st
 
-from . import etf_strength, placeholder  # noqa: F401
+from . import etf_strength  # noqa: F401
 
 # Tab 注册表 — 新 Tab 加这里即可
 TABS = [
@@ -19,12 +19,6 @@ TABS = [
         "label": "ETF 强弱趋势",
         "module": etf_strength,
         "icon": "📈",
-    },
-    {
-        "key": "placeholder",
-        "label": "更多功能",
-        "module": placeholder,
-        "icon": "🧩",
     },
 ]
 

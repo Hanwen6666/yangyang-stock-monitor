@@ -10,8 +10,6 @@ import csv
 import json
 import sys
 import urllib.request
-import urllib.error
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -194,12 +192,33 @@ def recompute_locally(codes=None, progress_cb=None):
         total = len(codes)
         print(f"[recompute] {total} 只 ETF,启动 v27...")
 
-        # 预拉所有 K 线(避免重复网络 I/O)
+        # === Pickle 缓存 — 同一个交易日复用昨天拉好的 207 只 K 线,
+        # 避免每天重拉全部（云环境被腾讯限流的风险也降低） ===
+        import pickle
+        from datetime import date as _date_cls
+        cache_dir = DATA_DIR / ".kline_cache"
+        cache_dir.mkdir(exist_ok=True)
+        cache_key = _date_cls.today().strftime("%Y%m%d")
+        cache_path = cache_dir / f"klines_{cache_key}.pkl"
         kline_cache = {}
+        if cache_path.exists():
+            try:
+                with cache_path.open("rb") as f:
+                    kline_cache = pickle.load(f)
+                print(f"[K线缓存] 命中 {cache_key},复用 {len(kline_cache)} 只")
+            except Exception as e:
+                print(f"[K线缓存] 读取失败,重新拉: {e}")
+                kline_cache = {}
+
+        # 哪些没缓存到 · 还要现拉
+        to_fetch = [c for c in codes if c not in kline_cache or kline_cache[c] is None]
+        if to_fetch:
+            print(f"[K线] 需重拉 {len(to_fetch)} 只")
+
         # 并行拉 K 线(IO 密集,多线程加速)
         fetched = {}
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            fut_map = {pool.submit(algo.fetch_kline, code, 250): code for code in codes}
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            fut_map = {pool.submit(algo.fetch_kline, code, 250): code for code in to_fetch}
             for i, fut in enumerate(as_completed(fut_map)):
                 code = fut_map[fut]
                 try:
@@ -299,6 +318,15 @@ def recompute_locally(codes=None, progress_cb=None):
             if _ds.isdigit():
                 asof = _ds
         metrics_df = pd.DataFrame(metrics_rows)
+        # 迭代完后同一日 kline_cache 持久化到 pickle,
+        # 次日 refresh 只需拉未命中的部分
+        try:
+            with cache_path.open("wb") as f:
+                pickle.dump(kline_cache, f)
+            print(f"[K线缓存] 已落盘 {cache_key}: {len(kline_cache)} 只")
+        except Exception as e:
+            print(f"[K线缓存] 落盘失败(下次重拉): {e}")
+
         rows, cols = _build_results_csv_from_metrics(metrics_df, asof)
         write_csv(DATA_DIR / "results.csv", rows, cols)
 

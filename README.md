@@ -28,7 +28,7 @@ git push -u origin main
 3. 点 **New app**,填:
    - **Repository**: `你的用户名/yangyang-stock-monitor`
    - **Branch**: `main`
-   - **Main file path**: `app.py`
+   - **Main file path**: `streamlit/app.py`  ⚠️ 注意了，子目录中有实际入口
 4. 点 **Deploy!** ⏳ 等 2-5 分钟
 5. 拿到类似 `https://你的用户名-yangyang-stock-monitor.streamlit.app` 的 URL 🎉
 
@@ -50,7 +50,7 @@ Streamlit Cloud 检测到 push 会自动重启,~1 分钟后页面就是新数据
 ```bash
 pip install -r requirements.txt
 python fetch_data.py     # 一次性:从 CloudBase 抓数据
-streamlit run app.py     # 浏览器打开 http://localhost:8501
+streamlit run streamlit/app.py     # 浏览器打开 http://localhost:8501
 ```
 
 ---
@@ -59,9 +59,13 @@ streamlit run app.py     # 浏览器打开 http://localhost:8501
 
 ```
 .
-├── app.py                  # 主应用 (Streamlit 单文件)
-├── fetch_data.py           # 从 CloudBase API 拉数据 → data/
-├── requirements.txt        # Python 依赖
+├── streamlit/
+│   ├── app.py              # 主应用（Streamlit 入口）
+│   ├── fetch_data.py       # 从 CloudBase API 拉数据 → data/
+│   ├── requirements.txt    # Python 依赖（已版本锁定）
+│   ├── lib/                # 共享模块: algorithm / chart_kline / ui_components / constants
+│   ├── tabs/               # 多 Tab 业务模块
+│   └── data/               # 缓存 CSV + K 线 pickle
 ├── data/
 │   ├── results.csv         # 197 只 ETF 当日强弱 (从 API 抓取)
 │   └── etf_trend_history.csv # 25 天趋势演变
