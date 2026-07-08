@@ -315,22 +315,20 @@ def main():
             if _needs_network:
                 _spawn_recompute_background()
 
-        # 如果后台重算刚刚完成 → 自动加载新数据 + toast 提示
+        # 如果后台重算刚刚完成 → 自动加载新数据（不弹 Toast）
         _recompute_done_path = FETCH_DATA_DIR / ".recompute_done"
         if _recompute_done_path.exists():
-            _toast_key = "_recompute_toasted"
-            if not st.session_state.get(_toast_key):
+            if not st.session_state.get("_recompute_loaded"):
                 try:
                     load_results.clear()
                     load_history.clear()
                     df_res = load_results()
                     df_hist = load_history()
-                    st.session_state[_toast_key] = True
-                    st.toast("🧮 v27 重算数据已自动加载", icon="✅")
+                    st.session_state["_recompute_loaded"] = True
                 except Exception:
                     pass
         else:
-            st.session_state.pop("_recompute_toasted", None)
+            st.session_state.pop("_recompute_loaded", None)
         # else: 「上次刷新」状态现在永久显示在 render_header 里了，不需要再这里重复
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
