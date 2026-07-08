@@ -253,7 +253,7 @@ def main():
     with btn_col:
         clicked = st.button(
             "🚧 刷新中..." if st.session_state._refreshing else "🔄 数据刷新",
-            help="快速刷新 API 数据 (5s) + 异步重算 v27 (1-2 min, 后台不阻塞)",
+            help="刷新数据 + 自动后台重算指标",
             use_container_width=True,
             type="primary",
             disabled=st.session_state._refreshing,
@@ -263,16 +263,30 @@ def main():
         if clicked:
             t_start = time.time()
             st.session_state._refreshing = True
-            progress = st.progress(0, text="拉取数据...")
+
+            # 判断数据日期：如果 today_asof = 今天，跳过 API 只清缓存重读
+            _today_str = datetime.now().strftime("%Y%m%d")
+            _current_asof = (rs.get("asof_date") or "")[:8] if rs else ""
+            _needs_network = (_current_asof != _today_str)
+
+            progress = st.progress(0, text="拉取数据..." if _needs_network else "重读缓存...")
             try:
-                api_res = refresh_data()
-                if not api_res["ok"]:
-                    progress.empty()
-                    st.error(f"拉取数据失败: {api_res['error']}")
-                    st.session_state._refreshing = False
-                    st.stop()
-                final = api_res
-                label = "✅ 快速刷新完成"
+                if _needs_network:
+                    api_res = refresh_data()
+                    if not api_res["ok"]:
+                        progress.empty()
+                        st.error(f"拉取数据失败: {api_res['error']}")
+                        st.session_state._refreshing = False
+                        st.stop()
+                    final = api_res
+                else:
+                    # 日期一样 → 只清缓存重读,不调网络
+                    load_results.clear()
+                    load_history.clear()
+                    df_res = load_results()
+                    df_hist = load_history()
+                    final = rs
+                label = "✅ 刷新完成"
                 progress.progress(100, text="完成")
                 time.sleep(0.2)
                 progress.empty()
@@ -297,8 +311,9 @@ def main():
             render_header(df_res, final)
             st.session_state._refreshing = False
 
-            # === 异步启动 v27 重算（后台跑，不阻塞主进程） ===
-            _spawn_recompute_background()
+            # === 日期变了 → 异步启动 v27 重算（后台跑，不阻塞主进程） ===
+            if _needs_network:
+                _spawn_recompute_background()
 
         # 如果后台重算刚刚完成 → 自动加载新数据 + toast 提示
         _recompute_done_path = FETCH_DATA_DIR / ".recompute_done"
@@ -314,8 +329,6 @@ def main():
                     st.toast("🧮 v27 重算数据已自动加载", icon="✅")
                 except Exception:
                     pass
-            # 标记清除（下次重算时新建）
-            # 在 render 完之后清理，确保只 toast 一次
         else:
             st.session_state.pop("_recompute_toasted", None)
         # else: 「上次刷新」状态现在永久显示在 render_header 里了，不需要再这里重复
