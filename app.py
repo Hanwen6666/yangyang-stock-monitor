@@ -249,14 +249,23 @@ def main():
     # 单按钮:点一下 → API 拉 history + v27 本地重算 + 进度条
     if "_refreshing" not in st.session_state:
         st.session_state._refreshing = False
-    btn_col, info_col = st.columns([1, 9])
+    if "_recomputing" not in st.session_state:
+        st.session_state._recomputing = False
+    btn_col, btn_col2, info_col = st.columns([1, 1, 8])
     with btn_col:
         clicked = st.button(
-            "🚧 刷新中..." if st.session_state._refreshing else "🔄 数据刷新",
-            help="先拉最新趋势历史,再用 v27 算法重算当前指标(约 2 分钟)",
+            "🚧 刷新中..." if st.session_state._refreshing else "⚡ 快速刷新",
+            help="从 CloudBase API 拉取最新趋势历史 (~10s)，不重算指标",
             use_container_width=True,
             type="primary",
             disabled=st.session_state._refreshing,
+        )
+    with btn_col2:
+        recompute_clicked = st.button(
+            "🚧 重算中..." if st.session_state._recomputing else "🧮 重算指标",
+            help="本地重新拉 207 只 K 线并重算 v27 算法指标 (~2 min,可能超时)",
+            use_container_width=True,
+            disabled=st.session_state._recomputing,
         )
     with info_col:
         rs = st.session_state.refresh_state
@@ -264,37 +273,71 @@ def main():
             t_start = time.time()
             st.session_state._refreshing = True
             progress = st.progress(0, text="拉取趋势历史...")
-
-            # === Step 1: 拉 API 数据(秒级) ===
-            api_res = refresh_data()
-            if not api_res["ok"]:
+            try:
+                api_res = refresh_data()
+                if not api_res["ok"]:
+                    progress.empty()
+                    st.error(f"拉取数据失败: {api_res['error']}")
+                    st.session_state._refreshing = False
+                    st.stop()
+                final = api_res
+                label = "✅ API 刷新完成"
+            except Exception as e:
                 progress.empty()
-                st.error(f"拉取数据失败: {api_res['error']}")
+                st.error(f"API 异常: {e}")
                 st.session_state._refreshing = False
                 st.stop()
+            progress.progress(100, text="完成")
+            time.sleep(0.2)
+            progress.empty()
 
-            progress.progress(15, text="趋势历史已就绪,本地 v27 重算...")
+            st.session_state.refresh_state = final
+            load_results.clear()
+            load_history.clear()
+            df_res = load_results()
+            df_hist = load_history()
 
-            # === Step 2: 本地全量 v27 重算(用最新 K 线真实算) ===
-            def on_progress(i, total, code, metrics, status):
-                pct = 15 + int((i / total) * 80)
-                phase = "拉 K 线" if status == "kline" else "重算"
-                progress.progress(min(pct, 99) / 100,
-                                   text=f"{phase} {i}/{total} · {code}")
-
+            elapsed = int((time.time() - t_start) * 1000)
+            st.toast(
+                "刷新完成: " + label + " · " + str(final.get('n_etfs', 0))
+                + "只ETF · " + str(final.get('n_points', 0))
+                + "天 · " + str(elapsed) + "ms",
+                icon="📊",
+            )
+            render_header(df_res, final)
+            st.session_state._refreshing = False
+        elif recompute_clicked:
+            t_start = time.time()
+            st.session_state._recomputing = True
+            progress = st.progress(0, text="本地重算 207 只...")
             try:
+                api_res = refresh_data()
+                if not api_res["ok"]:
+                    progress.empty()
+                    st.error(f"趋势拉取失败: {api_res['error']}")
+                    st.session_state._recomputing = False
+                    st.stop()
+
+                progress.progress(15, text="趋势历史已就绪,本地 v27 重算...")
+
+                def on_progress(i, total, code, metrics, status):
+                    pct = 15 + int((i / total) * 80)
+                    phase = "拉 K 线" if status == "kline" else "重算"
+                    progress.progress(min(pct, 99) / 100,
+                                       text=f"{phase} {i}/{total} · {code}")
+
                 local_res = recompute_locally(progress_cb=on_progress)
             except Exception as e:
                 progress.empty()
-                st.error(f"本地重算失败: {e}")
-                st.session_state._refreshing = False
+                st.error(f"重算失败: {e}")
+                st.session_state._recomputing = False
                 st.stop()
 
             progress.progress(100, text="完成")
             time.sleep(0.3)
             progress.empty()
 
-            if local_res["ok"] and local_res.get("n_etfs", 0) >= 50:
+            if local_res.get("ok") and local_res.get("n_etfs", 0) >= 50:
                 final = {**local_res, "mode": "local",
                           "n_points": api_res.get("n_points", 0)}
                 label = "✅ 本地 v27 重算完成"
@@ -303,7 +346,6 @@ def main():
                 label = "⚠️ 本地失败,回退 API 快照"
 
             st.session_state.refresh_state = final
-            # 清缓存,让下方 render_all_tabs 拉到新数据
             load_results.clear()
             load_history.clear()
             df_res = load_results()
@@ -311,16 +353,13 @@ def main():
 
             elapsed = int((time.time() - t_start) * 1000)
             st.toast(
-                "刷新完成: " + label + " · " + str(final['n_etfs'])
+                "重算完成: " + label + " · " + str(final.get('n_etfs', 0))
                 + "只ETF · " + str(api_res.get('n_points', 0))
                 + "天 · " + str(elapsed) + "ms",
                 icon="📊",
             )
-            # 不再 st.rerun(): 让当前执行流继续往下跑 render_all_tabs,
-            # 既保住个股分析 tab 的搜索/选择状态,也能继续显示「上次刷新」灰条。
-            # —— refresh 完成后再渲染一次 header(带上新数据日期) + 喂新数据给 tabs。
             render_header(df_res, final)
-            st.session_state._refreshing = False  # 恢复按钮
+            st.session_state._recomputing = False
         # else: 「上次刷新」状态现在永久显示在 render_header 里了，不需要再这里重复
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
