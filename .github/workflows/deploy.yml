@@ -1,0 +1,64 @@
+name: Deploy to CloudBase
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'streamlit/**'
+      - '.github/workflows/deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CloudBase CLI
+        run: npm install -g @cloudbase/cli
+
+      - name: Login to CloudBase
+        env:
+          TENCENTCLOUD_SECRETID: ${{ secrets.CLOUDBASE_SECRET_ID }}
+          TENCENTCLOUD_SECRETKEY: ${{ secrets.CLOUDBASE_SECRET_KEY }}
+        run: tcb login --api
+
+      - name: Build & Push Image
+        env:
+          ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
+        run: |
+          cd streamlit
+          tcb container-deploy \
+            --envId "$ENV_ID" \
+            --serviceName yangyang-stock-monitor \
+            --port 8080 \
+            --dockerfile ./Dockerfile \
+            --buildContext . \
+            --imageName yangyang-stock-monitor \
+            --imageTag "${{ github.sha }}"
+
+      - name: Force New Deploy
+        env:
+          ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
+        run: |
+          tcb service-rebuild \
+            --envId "$ENV_ID" \
+            --serviceName yangyang-stock-monitor
+
+      - name: Verify
+        env:
+          ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
+        run: |
+          sleep 30
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://yangyang-stock-monitor-$ENV_ID.ap-shanghai.app.tcloudbase.com/healthz)
+          echo "Health check status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "Deploy failed"
+            exit 1
+          fi

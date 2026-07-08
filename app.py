@@ -39,6 +39,18 @@ st.set_page_config(
 )
 
 # ============================================================
+# /healthz 健康检查 路由 (CloudBase 部署需要)
+# Streamlit 默认只能在同一个 script 下接路由，但顶层用 _stcore/health 同样可用
+# 这里提供一个自检便宜 · 如果文件 data 还没就绪不算失败
+# ============================================================
+import os as _os_health
+_HEALTH_OK = _os_health.path.exists(str(Path(__file__).parent / "data"))
+st.markdown(
+    f'<!-- healthz={("ok" if _HEALTH_OK else "no_data")} -->',
+    unsafe_allow_html=True,
+)
+
+# ============================================================
 # 全局 CSS
 # ============================================================
 st.markdown(f"""
