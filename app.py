@@ -264,7 +264,7 @@ def main():
             t_start = time.time()
             st.session_state._refreshing = True
 
-            _today_str = datetime.now().strftime("%Y%m%d")
+            _today_str = time.strftime("%Y%m%d")
             _current_asof = (rs.get("asof_date") or "")[:8] if rs else ""
             _needs_network = (_current_asof != _today_str)
 
