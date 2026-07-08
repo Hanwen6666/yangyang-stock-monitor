@@ -523,6 +523,51 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
         render_table(df_view)
 
 
+def _render_recompute_expander():
+    """大盘总览 > 板块异动之下：可展开的「🌍 重算指标」
+
+    耗时 1-2 min，云端 Streamlit Cloud 可能超时，但用户知晓后手动触发。
+    默认收起，不干扰日查页面布局。
+    """
+    from fetch_data import recompute_locally
+
+    key = "_v27_recompute_open"
+    if key not in st.session_state:
+        st.session_state[key] = False
+
+    with st.expander("🌍 重算指标 (v27 算法)", expanded=False):
+        st.caption(
+            "本地重新拉 207 只 ETF 的 K 线，用 v27 算法全面重算趋势分类和指标。"
+            "耗时 1-2 分钟，CloudBase 环境可能因超时中断。"
+        )
+        if st.button("🧮 开始重算", type="secondary", use_container_width=True):
+            import time as _t
+            with st.spinner("正在重算 207 只..."):
+                t0 = _t.time()
+                try:
+                    # 重算前先更新 API 数据
+                    from fetch_data import refresh_data
+                    api_res = refresh_data()
+                    res = recompute_locally()
+                except Exception as e:
+                    st.error(f"重算异常: {e}")
+                    st.stop()
+
+            elapsed = int((_t.time() - t0) * 1000)
+            if res.get("ok") and res.get("n_etfs", 0) >= 50:
+                st.success(f"✅ 重算完成 {res.get('n_etfs')} 只 · {elapsed}ms")
+                # 强制清缓存让页面刷新
+                import streamlit as _st
+                # 刷新页面数据
+                _st.cache_data.clear()
+                _st.rerun()
+            else:
+                st.warning(f"⚠️ 部分失败 ({res.get('error', '未知')})，已回退 API 数据")
+                _t.sleep(1)
+                import streamlit as _st
+                _st.rerun()
+
+
 def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     """KPI 卡下面一行「🚨 板块异动」横幅 + 「⬇️ 导出 CSV」按钮
 
@@ -988,6 +1033,9 @@ def render_overview(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     # 🚨 板块异动横幅 + 下载按钮 工具行
     _render_anomaly_banner(df_res, df_hist)
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
+
+    # === 可选 🌍 重算指标 — 默认收起，点开可跑本地 v27（耗时 1-2 min，云端可能超时） ===
+    _render_recompute_expander()
 
     icons = {
         "超强势":   "🟥",
