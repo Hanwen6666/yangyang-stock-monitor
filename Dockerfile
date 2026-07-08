@@ -6,6 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     STREAMLIT_SERVER_HEADLESS=true \
     STREAMLIT_SERVER_PORT=8080 \
@@ -15,9 +16,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# 装系统级依赖（pandas/akshare 都可能需要）
+# 装系统级依赖（极小）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -29,7 +29,6 @@ COPY . /app/
 
 EXPOSE 8080
 
-# 健康检查
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8080/healthz || exit 1
 
