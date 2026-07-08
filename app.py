@@ -197,6 +197,13 @@ def main():
     df_res = load_results()
     df_hist = load_history()
 
+    # 诊断提示：如果表格里最新价/成交额列全为 0 · 说明加载的是 seed 旧数据
+    _can_show_anomaly = (
+        "latest_close" in df_res.columns and "latest_amount" in df_res.columns
+    ) and (
+        df_res["latest_amount"].fillna(0).gt(0).any()
+    )
+
     # Fallback: 启动时 CSV 缺失 → 用仓库中的 seed CSV
     if df_res.empty or df_hist.empty:
         import shutil
@@ -215,6 +222,14 @@ def main():
         df_hist = load_history()
 
     is_empty = df_res.empty
+
+    # Fallback 后数据可能为 0(老 seed)——提示用户点刷新拉真数据
+    if not is_empty and not _can_show_anomaly:
+        st.info(
+            "📦 当前是仓库内置的 **seed 数据快照**，最新价 / 成交额列均为 0。"
+            "请点上方 **「🔄 数据刷新」** 拉取今日真实数据。",
+            icon="⚠️",
+        )
     if is_empty:
         # 首次启动 — 只显示提示,不自动调 API 防夸
         st.markdown(
