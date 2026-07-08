@@ -330,6 +330,8 @@ def main():
                     df_res = load_results()
                     df_hist = load_history()
                     st.session_state["_recompute_loaded"] = True
+                    _recompute_done_path.unlink(missing_ok=True)
+                    st.rerun()
                 except Exception:
                     pass
         else:
