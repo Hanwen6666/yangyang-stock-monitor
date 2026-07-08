@@ -97,8 +97,62 @@ def _build_results_csv_from_metrics(metrics_df, asof_date):
     return rows, cols
 
 
+def _batch_fetch_latest_from_tencent(codes: list, max_workers=10):
+    """批量从腾讯源拉最新价+成交额，返回 {code: (close, amount)} 字典
+
+    腾讯快照 fields[3] = 最新价, fields[35] = 最新价/成交量/成交额
+    """
+    from lib.algorithm import _tencent_market_prefix
+
+    def _fetch_one(code):
+        prefix = _tencent_market_prefix(code)
+        url = f"https://web.sqt.gtimg.cn/q={prefix}{code}"
+        try:
+            raw = urllib.request.urlopen(url, timeout=5).read()
+            text = raw.decode("gbk", errors="replace")
+            if not text or "~" not in text:
+                return code, (None, None)
+            fields = text.split("~")
+            close_val = None
+            if len(fields) > 3:
+                try:
+                    c = float(fields[3])
+                    if c > 0:
+                        close_val = c
+                except (ValueError, IndexError):
+                    pass
+            amount_val = None
+            if len(fields) > 35 and "/" in fields[35]:
+                parts = fields[35].split("/")
+                if len(parts) >= 3:
+                    try:
+                        a = float(parts[2])
+                        if a > 0:
+                            amount_val = a
+                    except (ValueError, IndexError):
+                        pass
+            return code, (close_val, amount_val)
+        except Exception:
+            return code, (None, None)
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for code, (close_val, amount_val) in pool.map(_fetch_one, codes):
+            results[code] = (close_val, amount_val)
+    return results
+
+
 def refresh_data(base_url=DEFAULT_BASE, timeout=20):
-    """从 CloudBase API 拉,重写本地 CSV"""
+    """从 CloudBase API 拉,重写本地 CSV
+
+    流程：
+      1. 调 /list + /trend-history （迅速拿到 trend + 分类）
+      2. 批量从腾讯源补最新价 + 成交额（单只 ~0.05s，207 只 ~1s）
+      3. 写 results.csv + etf_trend_history.csv
+
+    总耗时通常 ≤ 10s，不会触达 Streamlit Cloud 60s 超时。
+    无 latest_close = 以腾讯实时报价填写（无则保留 0）。
+    """
     t0 = datetime.now()
     try:
         list_data = fetch(f"{base_url}/list?top_n=500", timeout)
@@ -111,12 +165,19 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
                 "up_ratio_60", "n_changes", "n_points", "asof_date"]
         # API items 缺字段兜底
         rows = []
+        codes_needing_price = []
         for it in items:
             r = dict(it)
             r.setdefault("fund_size_yi", 0)
             r.setdefault("category", "其他")
             r["asof_date"] = asof
             rows.append(r)
+            # 记录 API 最新价 / 成交额全为 0 的，后续补腾讯源
+            has_price = float(r.get("latest_close", 0) or 0) > 0
+            if not has_price:
+                codes_needing_price.append(r["code"])
+
+        # 写基础 CSV（API 原始数据）
         write_csv(DATA_DIR / "results.csv", rows, cols)
 
         points = hist_data.get("points", [])
@@ -127,6 +188,25 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
                 row[p] = v
             hist_rows.append(row)
         write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows, ["code", "name"] + points)
+
+        # 用腾讯源补最新价：只补 API 全为 0 的代码（≈全部）
+        tencent_prices = {}
+        if codes_needing_price:
+            try:
+                tencent_prices = _batch_fetch_latest_from_tencent(codes_needing_price)
+            except Exception:
+                pass
+
+        # 回填 latest_close / latest_amount
+        for r in rows:
+            code = r["code"]
+            if code in tencent_prices:
+                close_val, amount_val = tencent_prices[code]
+                if close_val is not None:
+                    r["latest_close"] = close_val
+                if amount_val is not None:
+                    r["latest_amount"] = amount_val
+
         # 用腾讯源 K 线确认实际最新日期,避免 API 滞后
         try:
             sys.path.insert(0, str(Path(__file__).parent))
@@ -137,12 +217,14 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
                 _ds = _latest if isinstance(_latest, str) else _latest.strftime("%Y%m%d")
                 _ds = str(_ds).replace("-", "").replace("/", "")[:8]
                 if _ds.isdigit() and _ds > asof:
-                    asof = _ds  # 覆盖 API 陈旧的 asof
+                    asof = _ds
                     for _r in rows:
                         _r["asof_date"] = asof
-                    write_csv(DATA_DIR / "results.csv", rows, cols)
         except Exception:
             pass
+
+        # 补全后再写一次 CSV（有腾讯回填的最新价 / 成交额）
+        write_csv(DATA_DIR / "results.csv", rows, cols)
 
         if not asof:
             asof = datetime.now().strftime("%Y%m%d")

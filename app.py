@@ -238,7 +238,7 @@ def main():
             '<div style="color:#f59e0b;font-size:18px;font-weight:600;margin-bottom:8px;">'
             '📊 暂无数据</div>'
             '<div style="color:#9ca3af;font-size:13px;">'
-            '点击下方 <b>「数据刷新」</b> 按钮,拉取最新 ETF 数据并用 v27 算法重算(约 2 分钟)'
+            '点击下方 <b>「数据刷新」</b> 按钮,拉取最新数据(约 10 秒)'
             '</div></div>',
             unsafe_allow_html=True,
         )
@@ -246,33 +246,24 @@ def main():
     # 渲染 header
     render_header(df_res if not is_empty else pd.DataFrame(), st.session_state.refresh_state)
 
-    # 单按钮:点一下 → API 拉 history + v27 本地重算 + 进度条
+    # 单按钮:点一下 → API 拉 history + 腾讯源补最新价/成交额 (≤15s,安全)
     if "_refreshing" not in st.session_state:
         st.session_state._refreshing = False
-    if "_recomputing" not in st.session_state:
-        st.session_state._recomputing = False
-    btn_col, btn_col2, info_col = st.columns([1, 1, 8])
+    btn_col, info_col = st.columns([1, 9])
     with btn_col:
         clicked = st.button(
-            "🚧 刷新中..." if st.session_state._refreshing else "⚡ 快速刷新",
-            help="从 CloudBase API 拉取最新趋势历史 (~10s)，不重算指标",
+            "🚧 刷新中..." if st.session_state._refreshing else "🔄 数据刷新",
+            help="拉取 CloudBase API + 腾讯源最新价/成交额,约 10 秒",
             use_container_width=True,
             type="primary",
             disabled=st.session_state._refreshing,
-        )
-    with btn_col2:
-        recompute_clicked = st.button(
-            "🚧 重算中..." if st.session_state._recomputing else "🧮 重算指标",
-            help="本地重新拉 207 只 K 线并重算 v27 算法指标 (~2 min,可能超时)",
-            use_container_width=True,
-            disabled=st.session_state._recomputing,
         )
     with info_col:
         rs = st.session_state.refresh_state
         if clicked:
             t_start = time.time()
             st.session_state._refreshing = True
-            progress = st.progress(0, text="拉取趋势历史...")
+            progress = st.progress(0, text="拉取数据...")
             try:
                 api_res = refresh_data()
                 if not api_res["ok"]:
@@ -281,21 +272,21 @@ def main():
                     st.session_state._refreshing = False
                     st.stop()
                 final = api_res
-                label = "✅ API 刷新完成"
-            except Exception as e:
+                label = "✅ 刷新完成"
+                progress.progress(100, text="完成")
+                time.sleep(0.2)
                 progress.empty()
-                st.error(f"API 异常: {e}")
+                st.session_state.refresh_state = final
+                load_results.clear()
+                load_history.clear()
+                df_res = load_results()
+                df_hist = load_history()
+            except Exception as e:
+                # 任何异常也复位按钮，别跟着 session_state 一直锁住
+                progress.empty()
+                st.error(f"异常: {e}")
                 st.session_state._refreshing = False
                 st.stop()
-            progress.progress(100, text="完成")
-            time.sleep(0.2)
-            progress.empty()
-
-            st.session_state.refresh_state = final
-            load_results.clear()
-            load_history.clear()
-            df_res = load_results()
-            df_hist = load_history()
 
             elapsed = int((time.time() - t_start) * 1000)
             st.toast(
@@ -306,60 +297,6 @@ def main():
             )
             render_header(df_res, final)
             st.session_state._refreshing = False
-        elif recompute_clicked:
-            t_start = time.time()
-            st.session_state._recomputing = True
-            progress = st.progress(0, text="本地重算 207 只...")
-            try:
-                api_res = refresh_data()
-                if not api_res["ok"]:
-                    progress.empty()
-                    st.error(f"趋势拉取失败: {api_res['error']}")
-                    st.session_state._recomputing = False
-                    st.stop()
-
-                progress.progress(15, text="趋势历史已就绪,本地 v27 重算...")
-
-                def on_progress(i, total, code, metrics, status):
-                    pct = 15 + int((i / total) * 80)
-                    phase = "拉 K 线" if status == "kline" else "重算"
-                    progress.progress(min(pct, 99) / 100,
-                                       text=f"{phase} {i}/{total} · {code}")
-
-                local_res = recompute_locally(progress_cb=on_progress)
-            except Exception as e:
-                progress.empty()
-                st.error(f"重算失败: {e}")
-                st.session_state._recomputing = False
-                st.stop()
-
-            progress.progress(100, text="完成")
-            time.sleep(0.3)
-            progress.empty()
-
-            if local_res.get("ok") and local_res.get("n_etfs", 0) >= 50:
-                final = {**local_res, "mode": "local",
-                          "n_points": api_res.get("n_points", 0)}
-                label = "✅ 本地 v27 重算完成"
-            else:
-                final = api_res
-                label = "⚠️ 本地失败,回退 API 快照"
-
-            st.session_state.refresh_state = final
-            load_results.clear()
-            load_history.clear()
-            df_res = load_results()
-            df_hist = load_history()
-
-            elapsed = int((time.time() - t_start) * 1000)
-            st.toast(
-                "重算完成: " + label + " · " + str(final.get('n_etfs', 0))
-                + "只ETF · " + str(api_res.get('n_points', 0))
-                + "天 · " + str(elapsed) + "ms",
-                icon="📊",
-            )
-            render_header(df_res, final)
-            st.session_state._recomputing = False
         # else: 「上次刷新」状态现在永久显示在 render_header 里了，不需要再这里重复
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
