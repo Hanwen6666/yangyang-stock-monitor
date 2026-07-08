@@ -246,14 +246,14 @@ def main():
     # 渲染 header
     render_header(df_res if not is_empty else pd.DataFrame(), st.session_state.refresh_state)
 
-    # 单按钮:点一下 → API 拉 history + 腾讯源补最新价/成交额 (≤15s,安全)
+    # 单按钮: 先快速拉 API (4-6s) → 页面可用数据 → 后台异步跑 v27 重算
     if "_refreshing" not in st.session_state:
         st.session_state._refreshing = False
     btn_col, info_col = st.columns([1, 9])
     with btn_col:
         clicked = st.button(
             "🚧 刷新中..." if st.session_state._refreshing else "🔄 数据刷新",
-            help="拉取 CloudBase API + 腾讯源最新价/成交额,约 10 秒",
+            help="快速刷新 API 数据 (5s) + 异步重算 v27 (1-2 min, 后台不阻塞)",
             use_container_width=True,
             type="primary",
             disabled=st.session_state._refreshing,
@@ -272,7 +272,7 @@ def main():
                     st.session_state._refreshing = False
                     st.stop()
                 final = api_res
-                label = "✅ 刷新完成"
+                label = "✅ 快速刷新完成"
                 progress.progress(100, text="完成")
                 time.sleep(0.2)
                 progress.empty()
@@ -282,7 +282,6 @@ def main():
                 df_res = load_results()
                 df_hist = load_history()
             except Exception as e:
-                # 任何异常也复位按钮，别跟着 session_state 一直锁住
                 progress.empty()
                 st.error(f"异常: {e}")
                 st.session_state._refreshing = False
@@ -297,6 +296,28 @@ def main():
             )
             render_header(df_res, final)
             st.session_state._refreshing = False
+
+            # === 异步启动 v27 重算（后台跑，不阻塞主进程） ===
+            _spawn_recompute_background()
+
+        # 如果后台重算刚刚完成 → 自动加载新数据 + toast 提示
+        _recompute_done_path = FETCH_DATA_DIR / ".recompute_done"
+        if _recompute_done_path.exists():
+            _toast_key = "_recompute_toasted"
+            if not st.session_state.get(_toast_key):
+                try:
+                    load_results.clear()
+                    load_history.clear()
+                    df_res = load_results()
+                    df_hist = load_history()
+                    st.session_state[_toast_key] = True
+                    st.toast("🧮 v27 重算数据已自动加载", icon="✅")
+                except Exception:
+                    pass
+            # 标记清除（下次重算时新建）
+            # 在 render 完之后清理，确保只 toast 一次
+        else:
+            st.session_state.pop("_recompute_toasted", None)
         # else: 「上次刷新」状态现在永久显示在 render_header 里了，不需要再这里重复
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
@@ -313,6 +334,36 @@ def main():
       🐑 羊羊股市监测 · 5min cache · AmazingData via CloudBase · 手动刷新请点上方按钮
     </div>
     """, unsafe_allow_html=True)
+
+
+def _spawn_recompute_background():
+    """后台线程启动 v27 重算（不阻塞 Streamlit script runner）
+
+    重算结果写入 results.csv, 完成后标记 .recompute_done 文件。
+    用户下次点刷新时自动加载重算后的数据。
+    """
+    import threading
+
+    def _run():
+        try:
+            # 先清旧标记
+            done_path = FETCH_DATA_DIR / ".recompute_done"
+            if done_path.exists():
+                done_path.unlink()
+            from lib import algorithm as _algo
+            # 跑重算
+            res = recompute_locally()
+            if res.get("ok") and res.get("n_etfs", 0) >= 50:
+                from datetime import datetime as _dt
+                done_path.write_text(
+                    f"recompute_done ok n_etfs={res.get('n_etfs')} at {_dt.now().isoformat(timespec='seconds')}",
+                    encoding="utf-8",
+                )
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
 
 
 if __name__ == "__main__":
