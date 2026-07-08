@@ -264,58 +264,63 @@ def main():
             t_start = time.time()
             st.session_state._refreshing = True
 
-            # 判断数据日期：如果 today_asof = 今天，跳过 API 只清缓存重读
             _today_str = datetime.now().strftime("%Y%m%d")
             _current_asof = (rs.get("asof_date") or "")[:8] if rs else ""
             _needs_network = (_current_asof != _today_str)
 
-            progress = st.progress(0, text="拉取数据..." if _needs_network else "重读缓存...")
+            # 持续显示进度条，用 placeholder 避免闪一下消失
+            progress_ph = st.empty()
+            bar = progress_ph.progress(0, text="拉取数据..." if _needs_network else "重读缓存...")
             try:
                 if _needs_network:
+                    bar.progress(20, text="API 拉取趋势分类...")
                     api_res = refresh_data()
                     if not api_res["ok"]:
-                        progress.empty()
+                        progress_ph.empty()
                         st.error(f"拉取数据失败: {api_res['error']}")
                         st.session_state._refreshing = False
                         st.stop()
                     final = api_res
+                    bar.progress(60, text="腾讯源补最新价...")
+                    time.sleep(0.3)
                 else:
-                    # 日期一样 → 只清缓存重读,不调网络
+                    bar.progress(30, text="重读缓存...")
                     load_results.clear()
                     load_history.clear()
                     df_res = load_results()
                     df_hist = load_history()
                     final = rs
-                label = "✅ 刷新完成"
-                progress.progress(100, text="完成")
-                time.sleep(0.2)
-                progress.empty()
+                bar.progress(80, text="加载页面数据...")
                 st.session_state.refresh_state = final
                 load_results.clear()
                 load_history.clear()
                 df_res = load_results()
                 df_hist = load_history()
+                bar.progress(100, text="完成")
+                time.sleep(0.3)
             except Exception as e:
-                progress.empty()
+                progress_ph.empty()
                 st.error(f"异常: {e}")
                 st.session_state._refreshing = False
                 st.stop()
 
             elapsed = int((time.time() - t_start) * 1000)
+            # 先清进度条，再渲染 header（按钮才恢复）
+            render_header(df_res, final)
+            progress_ph.empty()
+            st.session_state._refreshing = False
+
             st.toast(
-                "刷新完成: " + label + " · " + str(final.get('n_etfs', 0))
+                "刷新完成: " + ("✅ 网络" if _needs_network else "✅ 缓存") +
+                " · " + str(final.get('n_etfs', 0))
                 + "只ETF · " + str(final.get('n_points', 0))
                 + "天 · " + str(elapsed) + "ms",
                 icon="📊",
             )
-            render_header(df_res, final)
-            st.session_state._refreshing = False
 
-            # === 日期变了 → 异步启动 v27 重算（后台跑，不阻塞主进程） ===
             if _needs_network:
                 _spawn_recompute_background()
 
-        # 如果后台重算刚刚完成 → 自动加载新数据（不弹 Toast）
         _recompute_done_path = FETCH_DATA_DIR / ".recompute_done"
         if _recompute_done_path.exists():
             if not st.session_state.get("_recompute_loaded"):
@@ -329,7 +334,6 @@ def main():
                     pass
         else:
             st.session_state.pop("_recompute_loaded", None)
-        # else: 「上次刷新」状态现在永久显示在 render_header 里了，不需要再这里重复
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
 
