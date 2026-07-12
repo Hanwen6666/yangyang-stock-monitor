@@ -460,62 +460,101 @@ def _compact_cell_html(label: str) -> str:
 
 
 def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
-    """详细列表子视图 - 含行业分类快速过滤"""
+    """详细列表子视图 - 含行业分类快速过滤
+
+    布局:
+      [全行业 multiselect] [共 X 只 · label]         [排序首位 → 右侧]
+      ─── 表格 ───
+    """
     # 行业过滤:仅在有 category 列时启用
     cats = sorted(df_res["category"].dropna().astype(str).unique().tolist()) \
         if "category" in df_res.columns else []
     cat_filter: list[str] = []
-    if cats:
-        c1, c2, c3 = st.columns([2, 2, 6])
-        with c1:
-            cat_filter = st.multiselect(
-                "行业", cats, default=[],
-                placeholder="全部行业", label_visibility="collapsed",
-                key=f"cat_filter_{label_filter or 'all'}",
-            )
-        with c2:
-            pass  # 占位 · 后续可加排序方向按钮
-        with c3:
-            if cat_filter:
-                st.markdown(
-                    f'<div style="color:{TEXT_DIM};font-size:10px;padding-top:8px;">'
-                    f'已选行业: <b style="color:{TEXT};">{len(cat_filter)}</b> 个</div>',
-                    unsafe_allow_html=True,
-                )
 
     df_view = _prepare_list_view(df_res, label_filter, tuple(cat_filter))
+
+    # === 单行布局: 全行业 · 共 X 只 · 排序首位 ===
+    # 比例: 行业筛选 5 · 标的数 2 · 排序首位 3
+    if cats:
+        col_filter, col_count, col_top = st.columns([5, 2, 3], gap="small")
+    else:
+        col_count, col_top = st.columns([2, 4], gap="small")
+        col_filter = None
+
+    if col_filter is not None:
+        with col_filter:
+            cat_filter = st.multiselect(
+                "全行业", cats, default=[],
+                placeholder="🔍 全部行业",
+                label_visibility="collapsed",
+                key=f"cat_filter_{label_filter or 'all'}",
+                help="多选筛行业;不选 = 全部",
+            )
+
+    # 若有筛选,重算 df_view
+    if cat_filter:
+        df_view = _prepare_list_view(df_res, label_filter, tuple(cat_filter))
+
+    # 计算要展示的"标的数"标签
+    label_tag_html = ""
+    if label_filter:
+        s = LABEL_STYLES.get(label_filter)
+        glow = s["glow"] if s else ACCENT_UP
+        label_tag_html = (
+            f'<span style="background:{glow}22;color:{glow};'
+            f'padding:1px 6px;border-radius:4px;font-size:10px;'
+            f'font-weight:600;margin-left:4px;">{label_filter}</span>'
+        )
+    industry_tag_html = ""
+    if cat_filter:
+        industry_tag_html = (
+            f'<span style="background:{BG_PANEL_HI};color:{TEXT};'
+            f'padding:1px 6px;border-radius:4px;font-size:10px;'
+            f'font-weight:600;margin-left:4px;">'
+            f'{len(cat_filter)}个行业</span>'
+        )
+
+    with col_count:
+        st.markdown(
+            f'<div style="display:flex;align-items:center;height:40px;'
+            f'padding:0 10px;background:{BG_PANEL};border:1px solid {BORDER};'
+            f'border-radius:6px;gap:6px;flex-wrap:wrap;">'
+            f'<span style="color:{TEXT_DIM};font-size:10px;font-weight:500;'
+            f'text-transform:uppercase;letter-spacing:0.5px;">共</span>'
+            f'<span style="color:{ACCENT_UP};font-size:18px;font-weight:700;'
+            f'font-family:monospace;line-height:1;">{len(df_view):,}</span>'
+            f'<span style="color:{TEXT_MUTED};font-size:11px;">只</span>'
+            + label_tag_html + industry_tag_html +
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    with col_top:
+        top = df_view.iloc[0] if len(df_view) else None
+        if top is not None:
+            s = LABEL_STYLES.get(top["strength_label"])
+            glow = s["glow"] if s else TEXT_MUTED
+            st.markdown(
+                f'<div style="display:flex;align-items:center;justify-content:flex-end;'
+                f'height:40px;padding:0 10px;background:{BG_PANEL};border:1px solid {BORDER};'
+                f'border-radius:6px;gap:6px;">'
+                f'<span style="color:{TEXT_DIM};font-size:10px;">排序首位</span>'
+                f'<span style="color:{TEXT};font-size:13px;font-weight:600;'
+                f'font-family:monospace;">{top["code"]} {top["name"]}</span>'
+                f'<span style="color:{glow};font-weight:600;font-size:10px;">'
+                f'· {top["strength_label"]}</span></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="height:40px;"></div>',
+                unsafe_allow_html=True,
+            )
 
     title_extra = f" · {label_filter}" if label_filter else ""
     if cat_filter:
         title_extra += f" · {len(cat_filter)}个行业"
 
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        st.markdown(
-            f'<div style="background:{BG_PANEL};border:1px solid {BORDER};'
-            f'border-radius:6px;padding:6px 10px;text-align:center;">'
-            f'<div style="color:{TEXT_MUTED};font-size:10px;text-transform:uppercase;'
-            f'letter-spacing:0.5px;">标的池</div>'
-            f'<div style="color:{TEXT};font-size:16px;font-weight:700;'
-            f'font-family:monospace;">{len(df_view):,}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-    with c2:
-        top = df_view.iloc[0] if len(df_view) else None
-        if top is not None:
-            s = LABEL_STYLES.get(top["strength_label"])
-            bg = s["glow"] if s else "#fff"
-            st.markdown(
-                f'<div style="text-align:right;color:{TEXT_DIM};font-size:10px;'
-                f'padding:4px 0;">'
-                f'<span style="color:{TEXT_MUTED};">排序首位</span> '
-                f'<span style="color:{TEXT};font-size:13px;font-weight:600;'
-                f'font-family:monospace;">{top["code"]} {top["name"]}</span> '
-                f'<span style="color:{bg};font-weight:600;font-size:10px;">'
-                f'· {top["strength_label"]}</span></div>',
-                unsafe_allow_html=True,
-            )
     st.markdown(f'<div style="height:6px"></div>', unsafe_allow_html=True)
     if df_view.empty:
         st.info(f"该分类下暂无 ETF{title_extra}")
@@ -565,15 +604,31 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     top_in = diffs[-1]   # 净流入最多
     top_out = diffs[0]   # 净流出最多
 
-    def _chip(label, pp):
-        ls = LABEL_STYLES.get(label)
-        fg = ls["glow"] if ls else TEXT
+    def _chip(label, pp, direction: str):
+        """方向驱动的 chip:in=流入(红暖),out=流出(绿冷)
+
+        不再用趋势档位 glow 色做底色,改用流入/流出语义色 —— 扫一眼就知道方向。
+        """
+        is_in = direction == "in"
+        accent = ACCENT_UP if is_in else ACCENT_DN    # 红=流入 / 绿=流出
+        arrow = "▲" if is_in else "▼"
         sign = "+" if pp > 0 else ""
+        ls = LABEL_STYLES.get(label)
+        # 趋势档位名做小角标(灰底),突出方向色块
+        tag_bg = ls["bg"] if ls else BORDER_HI
+        tag_fg = ls["fg"] if ls else TEXT_MUTED
         return (
-            f'<span style="background:{fg}22;color:{fg};'
-            f'padding:1px 8px;border-radius:10px;'
-            f'font-size:11px;font-weight:600;margin-right:6px;">'
-            f'{label}{sign}{pp:.1f}pp</span>'
+            f'<span style="display:inline-flex;align-items:center;gap:6px;'
+            f'background:{accent}1f;color:{accent};'
+            f'padding:2px 8px;border-radius:10px;'
+            f'font-size:11px;font-weight:700;margin-right:6px;'
+            f'border:1px solid {accent}55;">'
+            f'<span style="font-size:10px;line-height:1;">{arrow}</span>'
+            f'<span>{sign}{pp:.1f}pp</span>'
+            f'<span style="background:{tag_bg};color:{tag_fg};'
+            f'padding:0 5px;border-radius:4px;font-size:10px;'
+            f'font-weight:600;letter-spacing:0.3px;">{label}</span>'
+            f'</span>'
         )
 
     banner_html = (
@@ -581,12 +636,17 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         f'background:linear-gradient(90deg,rgba(255,77,79,0.06),rgba(34,197,94,0.06));'
         f'border:1px solid {BORDER};border-radius:6px;padding:8px 12px;">'
         f'<span style="font-size:13px;">🚨 <b style="color:{TEXT};">板块异动</b></span>'
-        f'<span style="color:{TEXT_DIM};font-size:11px;">'
-        f'<span style="color:{ACCENT_UP};font-weight:600;">资金流入</span> '
-        f'{_chip(top_in[0], top_in[1])} '
+        f'<span style="color:{TEXT_DIM};font-size:11px;display:inline-flex;'
+        f'align-items:center;gap:6px;">'
+        f'<span style="color:{ACCENT_UP};font-weight:700;'
+        f'background:{ACCENT_UP}14;padding:1px 7px;border-radius:4px;'
+        f'border:1px solid {ACCENT_UP}33;">▲ 资金流入</span> '
+        f'{_chip(top_in[0], top_in[1], "in")} '
         f'<span style="color:{TEXT_DIM};">·</span> '
-        f'<span style="color:{ACCENT_DN};font-weight:600;">资金流出</span> '
-        f'{_chip(top_out[0], top_out[1])}'
+        f'<span style="color:{ACCENT_DN};font-weight:700;'
+        f'background:{ACCENT_DN}14;padding:1px 7px;border-radius:4px;'
+        f'border:1px solid {ACCENT_DN}33;">▼ 资金流出</span> '
+        f'{_chip(top_out[0], top_out[1], "out")}'
         f'</span>'
         f'</div>'
     )
