@@ -360,6 +360,9 @@ def main():
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
 
+    # 顶部小 KPI 实时状态条 (下次自动刷新倒计时 + 趋势最新 + 数据完整度)
+    _render_status_strip(df_res, df_hist)
+
     # 路由所有 Tab
     # 各 Tab 内部决定是否要展示自己的 KPI(例如 ETF 强弱 Tab 会在内部显示标的池/趋势分布)
     render_all_tabs(df_res, df_hist)
@@ -372,6 +375,111 @@ def main():
       🐑 羊羊股市监测 · 5min cache · AmazingData via CloudBase · 手动刷新请点上方按钮
     </div>
     """, unsafe_allow_html=True)
+
+
+def _render_status_strip(df_res, df_hist):
+    """顶部状态条: 距下次自动刷新 + 数据健康度 + 趋势最新日期"""
+    now = time.localtime()
+    next_run_min = 5
+    cur_total_min = now.tm_hour * 60 + now.tm_min
+    next_total_min = (now.tm_hour + 1) * 60 + next_run_min if cur_total_min >= next_run_min else now.tm_hour * 60 + next_run_min
+
+    # 趋势最新日期 — 从 df_hist 列名取 (支持 d_YYYYMMDD 与 d_YYYY-MM-DD)
+    last_date = "—"
+    if not df_hist.empty:
+        dates = []
+        for c in df_hist.columns:
+            if c.startswith("d_"):
+                d = c[2:].replace("-", "").replace("/", "")
+                if d.isdigit() and len(d) == 8:
+                    dates.append(d)
+        if dates:
+            mx = max(dates)
+            last_date = f"{mx[:4]}-{mx[4:6]}-{mx[6:]}"
+
+    # 成交额为 0 的数量
+    n_zero = 0
+    n_total = 0
+    if not df_res.empty and "latest_amount" in df_res.columns:
+        n_total = len(df_res)
+        n_zero = int((df_res["latest_amount"].fillna(0) <= 0).sum())
+
+    # 本次刷新时间 — 优先从 session_state 读,否则从 CSV mtime 推断
+    rs = st.session_state.get("refresh_state") or {}
+    fetched_at = (rs.get("fetched_at") or "—")[:19].replace("T", " ")
+    if fetched_at == "—":
+        try:
+            from pathlib import Path as _P
+            results_p = _P(DATA_DIR) / "results.csv"
+            if results_p.exists():
+                mtime = results_p.stat().st_mtime
+                fetched_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+        except Exception:
+            pass
+
+    # 倒计时秒数
+    import datetime
+    now_dt = datetime.datetime.now()
+    next_hour = now_dt.hour + 1 if now_dt.minute >= 5 else now_dt.hour
+    next_dt = now_dt.replace(hour=next_hour % 24, minute=5, second=0, microsecond=0)
+    if next_hour >= 24:
+        next_dt = next_dt + datetime.timedelta(days=1)
+    remaining_sec = int((next_dt - now_dt).total_seconds())
+    hh = remaining_sec // 3600
+    mm = (remaining_sec % 3600) // 60
+    ss = remaining_sec % 60
+    countdown_str = f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+    countdown_ph = st.empty()
+    countdown_ph.markdown(
+        f'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;'
+        f'margin:6px 0 14px;padding:9px 14px;'
+        f'background:{BG_PANEL};border:1px solid {BORDER};border-radius:6px;'
+        f'font-size:11px;color:{TEXT_MUTED};">'
+        f'<span style="display:inline-flex;align-items:center;gap:5px;">'
+        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">⏱ 下次自动刷新</span>'
+        f'<span id="_cnt" style="color:{ACCENT_UP};font-family:monospace;font-weight:700;'
+        f'font-size:12px;background:{ACCENT_UP}14;padding:1px 7px;border-radius:4px;">{countdown_str}</span>'
+        f'</span>'
+        f'<span style="color:{BORDER_HI};">|</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:5px;">'
+        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">📅 趋势最新</span>'
+        f'<span style="color:{TEXT};font-family:monospace;font-weight:600;font-size:12px;">{last_date}</span>'
+        f'</span>'
+        f'<span style="color:{BORDER_HI};">|</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:5px;">'
+        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔄 本次刷新</span>'
+        f'<span style="color:{TEXT};font-family:monospace;font-weight:600;font-size:12px;">{fetched_at}</span>'
+        f'</span>'
+        f'<span style="color:{BORDER_HI};">|</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:5px;">'
+        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">✓ 数据完整度</span>'
+        f'<span style="color:{ACCENT_UP if n_zero == 0 else "#f59e0b"};font-family:monospace;font-weight:700;font-size:12px;'
+        f'background:{(ACCENT_UP if n_zero == 0 else "#f59e0b")}14;padding:1px 7px;border-radius:4px;">'
+        f'{n_total - n_zero}/{n_total}</span>'
+        f'</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    countdown_html = f"""
+    <script>
+    (function() {{
+      var el = document.getElementById('_cnt');
+      if (!el) return;
+      var t = {remaining_sec};
+      setInterval(function() {{
+        t -= 1;
+        if (t < 0) t = 3600;
+        var h = Math.floor(t / 3600);
+        var m = Math.floor((t % 3600) / 60);
+        var s = t % 60;
+        el.textContent = (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+      }}, 1000);
+    }})();
+    </script>
+    """
+    import streamlit.components.v1 as components
+    components.html(countdown_html, height=0)
 
 
 def _spawn_recompute_background():
