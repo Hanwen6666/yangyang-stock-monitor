@@ -100,6 +100,15 @@ st.markdown(f"""
     border-bottom: 2px solid {ACCENT_UP};
   }}
 
+  /* Radio / Segmented Control(子视图切换)— 字重加强 */
+  [role="radiogroup"] [role="radio"] {{
+    font-weight: 500 !important;
+    transition: background 0.15s, border-color 0.15s;
+  }}
+  [role="radiogroup"] [role="radio"]:hover {{
+    background: {BG_PANEL_HI} !important;
+  }}
+
   /* Metric */
   [data-testid="stMetricValue"] {{
     font-size: 26px;

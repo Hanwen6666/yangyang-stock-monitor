@@ -118,13 +118,14 @@ def render_table(df: pd.DataFrame):
         return
 
     cols_order = [
-        "code", "name", "strength_label", "category",
+        "code", "name", "strength_label", "change_pct", "category",
         "latest_close", "latest_amount",
         "fund_size_yi",
     ]
     show = df[[c for c in cols_order if c in df.columns]].copy()
     show = show.rename(columns={
         "code": "代码", "name": "名称", "strength_label": "趋势",
+        "change_pct": "涨跌幅",
         "category": "分类",
         "latest_close": "最新价", "latest_amount": "成交额(亿)",
         "fund_size_yi": "规模(亿)",
@@ -152,6 +153,25 @@ def render_table(df: pd.DataFrame):
 
     if "代码" in show.columns:
         show["代码"] = show["代码"].apply(lambda v: f"{int(v)}" if pd.notna(v) else "-")
+    if "涨跌幅" in show.columns:
+        # 涨跌幅颜色: 涨红跌绿(中国惯例),带背景色块增强扫读对比
+        def _fmt_chg(v):
+            if pd.isna(v):
+                return "-"
+            try:
+                v = float(v)
+            except Exception:
+                return "-"
+            color = ACCENT_UP if v > 0 else (ACCENT_DN if v < 0 else TEXT_MUTED)
+            sign = "+" if v > 0 else ""
+            return (
+                f'<span style="color:{color};font-weight:700;'
+                f'font-family:monospace;background:{color}14;'
+                f'padding:1px 6px;border-radius:3px;'
+                f'font-feature-settings:&quot;tnum&quot;;">'
+                f'{sign}{v:.2f}%</span>'
+            )
+        show["涨跌幅"] = show["涨跌幅"].apply(_fmt_chg)
     if "最新价" in show.columns:
         show["最新价"] = show["最新价"].apply(fmt_price)
     if "成交额(亿)" in show.columns:
@@ -295,12 +315,14 @@ def render_table(df: pd.DataFrame):
       .etf-table th:nth-child(3) {{ min-width: 80px; }}
       .etf-table th:last-child {{ text-align: right; }}
       .etf-table td {{
-        padding: 5px 8px; border-bottom: 1px solid #151b2a;
+        padding: 7px 8px; border-bottom: 1px solid #151b2a;
         color: {TEXT}; white-space: nowrap; font-feature-settings: "tnum";
-        font-size: 11px;
+        font-size: 12px;
       }}
       .etf-table td:nth-child(2) {{ max-width: 220px; overflow: hidden; text-overflow: ellipsis; }}
+      .etf-table tr {{ transition: background 0.12s ease; }}
       .etf-table tr:hover td {{ background: {BG_PANEL_HI}; }}
+      .etf-table tr:hover td:first-child {{ box-shadow: inset 2px 0 0 {ACCENT_UP}; }}
       .etf-table tr:last-child td {{ border-bottom: none; }}
       /* 回到顶部浮钮(右下角,避免跟底部 footer 重叠) */
       .back-to-top {{
@@ -476,7 +498,7 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
     # === 单行布局: 全行业 · 共 X 只 · 排序首位 ===
     # 比例: 行业筛选 5 · 标的数 2 · 排序首位 3
     if cats:
-        col_filter, col_count, col_top = st.columns([5, 2, 3], gap="small")
+        col_filter, col_count, col_top = st.columns([4, 2, 4], gap="small")
     else:
         col_count, col_top = st.columns([2, 4], gap="small")
         col_filter = None
@@ -534,14 +556,19 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
         if top is not None:
             s = LABEL_STYLES.get(top["strength_label"])
             glow = s["glow"] if s else TEXT_MUTED
+            # 名称超 8 字时截断(防止挤压)
+            name_disp = top["name"]
+            if len(name_disp) > 10:
+                name_disp = name_disp[:9] + "…"
             st.markdown(
                 f'<div style="display:flex;align-items:center;justify-content:flex-end;'
                 f'height:40px;padding:0 10px;background:{BG_PANEL};border:1px solid {BORDER};'
-                f'border-radius:6px;gap:6px;">'
-                f'<span style="color:{TEXT_DIM};font-size:10px;">排序首位</span>'
+                f'border-radius:6px;gap:6px;overflow:hidden;">'
+                f'<span style="color:{TEXT_DIM};font-size:10px;flex-shrink:0;">排序首位</span>'
                 f'<span style="color:{TEXT};font-size:13px;font-weight:600;'
-                f'font-family:monospace;">{top["code"]} {top["name"]}</span>'
-                f'<span style="color:{glow};font-weight:600;font-size:10px;">'
+                f'font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+                f'flex-shrink:1;min-width:0;">{top["code"]} {name_disp}</span>'
+                f'<span style="color:{glow};font-weight:600;font-size:10px;flex-shrink:0;">'
                 f'· {top["strength_label"]}</span></div>',
                 unsafe_allow_html=True,
             )
