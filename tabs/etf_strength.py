@@ -380,16 +380,17 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
 
     st.markdown(
         f'<div style="color:{TEXT_DIM};font-size:11px;margin-bottom:6px;'
-        f'display:flex;justify-content:space-between;align-items:center;">'
-        f'<span style="font-weight:500;">共 {n_etf} 只 · {n_days} 天 '
+        f'display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">'
+        f'<span style="font-weight:500;color:{TEXT};">共 {n_etf} 只 · {n_days} 天 '
         f'<span style="color:{TEXT_DIM};font-size:10px;margin-left:6px;">'
         f'拼装 {render_ms}ms</span></span>'
-        f'<span style="font-size:11px;letter-spacing:0.3px;">'
-        f'<span style="background:#ff1a3d;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">超强势</span> '
-        f'<span style="background:#ff6b00;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">强势</span> '
-        f'<span style="background:#ffc107;color:#0a0e1a;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">震荡上涨</span> '
-        f'<span style="background:#2a334a;color:#c5c8d6;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">横盘震荡</span> '
-        f'<span style="background:#3a7bd5;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;margin-right:2px;">震荡下跌</span> '
+        f'<span style="font-size:11px;letter-spacing:0.3px;display:flex;align-items:center;gap:6px;">'
+        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;">图例</span>'
+        f'<span style="background:#ff1a3d;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;">超强势</span> '
+        f'<span style="background:#ff6b00;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;">强势</span> '
+        f'<span style="background:#ffc107;color:#0a0e1a;padding:1px 6px;border-radius:3px;font-size:10px;">震荡上涨</span> '
+        f'<span style="background:#2a334a;color:#c5c8d6;padding:1px 6px;border-radius:3px;font-size:10px;">横盘震荡</span> '
+        f'<span style="background:#3a7bd5;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;">震荡下跌</span> '
         f'<span style="background:#1c2538;color:#9aaac0;padding:1px 6px;border-radius:3px;font-size:10px;">一直下跌</span>'
         f'</span>'
         f'</div>',
@@ -426,15 +427,16 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
       }}
       .compact-table th:nth-child(-n+2) {{ text-align: left !important; padding-left: 6px; padding-right: 0 !important; }}
       .compact-table td {{
-        padding: 3px 1px; border-bottom: 1px solid rgba(31,38,56,0.4);
+        padding: 5px 1px; border-bottom: 1px solid rgba(31,38,56,0.4);
         color: {TEXT}; white-space: nowrap;
         font-size: 11px; text-align: center;
-        line-height: 1.4;
+        line-height: 1.5;
         overflow: hidden; text-overflow: ellipsis;
+        height: 30px;
       }}
       .compact-table td:nth-child(-n+2) {{ text-align: left !important; padding-left: 6px; padding-right: 0 !important; font-size: 11px; }}
       .compact-table th:first-child, .compact-table td:first-child {{
-        width: 56px !important;
+        width: 64px !important;
         padding-right: 4px !important;
       }}
       .compact-table th:first-child {{ background: linear-gradient(180deg,#1e2537,#181e2e); }}
@@ -445,15 +447,16 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
       }}
       .compact-table th:nth-child(2),
       .compact-table td:nth-child(2) {{
-        width: 120px !important;
+        width: 140px !important;
         padding-left: 2px !important;
       }}
       /* 日期列宽度统一 */
       .compact-table th:nth-child(n+3),
       .compact-table td:nth-child(n+3) {{
-        width: 38px !important;
-        padding: 3px 1px !important;
+        width: 42px !important;
+        padding: 5px 2px !important;
       }}
+      .compact-table th {{ padding: 6px 1px !important; }}
       .compact-table tr:hover td:first-child {{ background: rgba(26,32,48,0.95); }}
       .compact-table tr:hover td {{ background: rgba(20,24,40,0.6); }}
       .compact-table tr:last-child td {{ border-bottom: none; }}
@@ -871,12 +874,64 @@ def render_stock_detail(df_res: pd.DataFrame):
 
     # 用户未首次点击「分析」且 session_state 中有最近看过的 code —— 自动恢复
     if not go_btn and not st.session_state.stock_detail_analysed:
-        st.markdown(
-            f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
-            f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
-            f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
-            unsafe_allow_html=True,
-        )
+        # === 热门 ETF 示例 · 按交易额选 top 6 ===
+        try:
+            _top = df_res.sort_values("latest_amount", ascending=False).head(6)
+            _chips = []
+            for _, r in _top.iterrows():
+                c = str(r["code"]).zfill(6)
+                n = str(r.get("name", ""))
+                lbl = f"{c} {n[:7]}"
+                _chips.append(
+                    f'<button class="hot-etf-chip" data-code="{c}" '
+                    f'style="background:{BG_PANEL_HI};color:{TEXT};border:1px solid {BORDER};'
+                    f'border-radius:16px;padding:5px 12px;font-size:11px;font-family:monospace;'
+                    f'cursor:pointer;transition:all 0.15s;">{lbl}</button>'
+                )
+            hot_html = (
+                '<div style="margin-top:14px;padding:14px 16px;'
+                f'background:{BG_PANEL};border:1px dashed {BORDER_HI};border-radius:8px;">'
+                f'<div style="color:{TEXT_DIM};font-size:11px;margin-bottom:8px;'
+                f'text-transform:uppercase;letter-spacing:0.5px;">🔥 热门 ETF · 点选快速查看</div>'
+                '<div style="display:flex;flex-wrap:wrap;gap:6px;">'
+                + "".join(_chips) +
+                '</div></div>'
+            )
+            st.markdown(
+                f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;padding:30px 0 4px;">'
+                f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>·K 线图加载后自动滚到下方</div>'
+                + hot_html,
+                unsafe_allow_html=True,
+            )
+            # JS 绑定 chip 点击 → 写入 selectbox 然后点 分析
+            st.markdown("""
+            <script>
+            (function(){
+              var btns = document.querySelectorAll('.hot-etf-chip');
+              btns.forEach(function(b){
+                b.addEventListener('mouseenter', function(){ b.style.background = '#1f2638'; b.style.borderColor = '#ff4d4f'; });
+                b.addEventListener('mouseleave', function(){ b.style.background = '#1a2030'; b.style.borderColor = '#1f2638'; });
+                b.addEventListener('click', function(){
+                  var code = b.getAttribute('data-code');
+                  // 通过 query string 跳转 (简单直接)
+                  var inputs = window.parent.document.querySelectorAll('[data-baseweb="select"] input');
+                  if (inputs.length) {
+                    inputs[0].focus();
+                    inputs[0].value = code;
+                    inputs[0].dispatchEvent(new Event('input', {bubbles:true}));
+                  }
+                });
+              });
+            })();
+            </script>
+            """, unsafe_allow_html=True)
+        except Exception:
+            st.markdown(
+                f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
+                f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
+                f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
+                unsafe_allow_html=True,
+            )
         st.text_input("_stock_detail_hidden", label_visibility="collapsed", disabled=True, key="_hidden_widget")
         return
 

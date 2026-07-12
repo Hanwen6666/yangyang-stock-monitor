@@ -85,18 +85,25 @@ st.markdown(f"""
   .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar {{ height: 4px; }}
   .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-thumb {{ background: {BORDER_HI}; border-radius: 2px; }}
   .stTabs [data-baseweb="tab"] {{
-    height: 40px;
+    height: 42px;
     background: transparent;
     color: {TEXT_MUTED};
     border-radius: 6px 6px 0 0;
     font-weight: 500;
-    padding: 0 14px;
+    padding: 0 16px;
     font-size: 13px;
     flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+    border-bottom: 2px solid transparent;
+  }}
+  .stTabs [data-baseweb="tab"]:hover {{
+    background: {BG_PANEL};
+    color: {TEXT};
   }}
   .stTabs [aria-selected="true"] {{
     background: {BG_PANEL};
     color: {TEXT};
+    font-weight: 600;
     border-bottom: 2px solid {ACCENT_UP};
   }}
 
@@ -179,13 +186,52 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
         except Exception:
             last_fetch_html = f'<span style="color:{TEXT_DIM};font-size:10px;">刷新 {fa}</span>'
 
+    # === Logo: SVG 几何羊脸 + 主标 题 ===
+    logo_svg = (
+        '<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" '
+        'style="flex-shrink:0;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.4));">'
+          # 渐变定义
+          '<defs>'
+            '<linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">'
+              f'<stop offset="0%" stop-color="{ACCENT_UP}"/>'
+              f'<stop offset="100%" stop-color="#ff8a3d"/>'
+            '</linearGradient>'
+          '</defs>'
+          # 头部 圆
+          '<circle cx="16" cy="17" r="10" fill="url(#logoGrad)" stroke="' + ACCENT_UP + '" stroke-width="0.8"/>'
+          # 耳
+          '<ellipse cx="7" cy="11" rx="3" ry="4.5" fill="#7a4a2a" transform="rotate(-25 7 11)"/>'
+          '<ellipse cx="25" cy="11" rx="3" ry="4.5" fill="#7a4a2a" transform="rotate(25 25 11)"/>'
+          # 腿 (4个)
+          '<rect x="9" y="25" width="2.5" height="5" rx="1" fill="#5a3a1a"/>'
+          '<rect x="14.5" y="25" width="2.5" height="5" rx="1" fill="#5a3a1a"/>'
+          '<rect x="20" y="25" width="2.5" height="5" rx="1" fill="#5a3a1a"/>'
+          # 脸
+          '<ellipse cx="16" cy="18" rx="6" ry="5" fill="#f5e6d3"/>'
+          # 眼
+          '<circle cx="13" cy="17" r="1.2" fill="#1a1a1a"/>'
+          '<circle cx="19" cy="17" r="1.2" fill="#1a1a1a"/>'
+          '<circle cx="13.3" cy="16.6" r="0.3" fill="#fff"/>'
+          '<circle cx="19.3" cy="16.6" r="0.3" fill="#fff"/>'
+          # 嘴
+          '<path d="M14 21 Q16 23 18 21" stroke="#1a1a1a" stroke-width="0.8" fill="none" stroke-linecap="round"/>'
+          # 绵羊卷毛 top
+          '<circle cx="11" cy="8" r="2.2" fill="#fff" opacity="0.85"/>'
+          '<circle cx="16" cy="6.5" r="2.5" fill="#fff" opacity="0.85"/>'
+          '<circle cx="21" cy="8" r="2.2" fill="#fff" opacity="0.85"/>'
+        '</svg>'
+    )
+
     header_html = (
         '<div style="display:flex;align-items:center;gap:12px;margin-bottom:2px;'
         f'padding-bottom:10px;border-bottom:1px solid {BORDER};">'
-      '<div style="display:flex;align-items:baseline;gap:6px;">'
-        '<span style="margin:0;font-size:18px;font-weight:700;'
-             f'color:{TEXT};letter-spacing:-0.3px;">🐑 羊羊股市监测</span>'
-        '<span style="color:{TEXT_DIM};font-size:11px;font-weight:400;">A股ETF·趋势分析</span>'
+      '<div style="display:flex;align-items:center;gap:10px;">'
+        + logo_svg +
+        '<div style="display:flex;flex-direction:column;gap:1px;">'
+          '<span style="margin:0;font-size:18px;font-weight:700;'
+               f'color:{TEXT};letter-spacing:-0.3px;line-height:1.1;">🐑 羊羊股市监测</span>'
+          '<span style="color:{TEXT_DIM};font-size:11px;font-weight:400;">A股ETF·趋势分析</span>'
+        '</div>'
       '</div>'
       '<div style="margin-left:auto;display:flex;align-items:center;gap:6px;'
            f'background:{BG_PANEL};border:1px solid {BORDER};'
