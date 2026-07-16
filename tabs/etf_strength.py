@@ -1122,9 +1122,10 @@ def _subview_radio(view_keys, view_labels, state_key, default_idx=0):
     if state_key not in st.session_state:
         st.session_state[state_key] = view_keys[default_idx]
     # 优先尝试 st.segmented_control(1.40+ 原生),失败则降级为 radio(1.39)
+    # label 用单空格 + label_visibility="collapsed" 完全隐藏(streamlit 1.40+ 不再接受空字符串 label)
     try:
         _sel = st.segmented_control(
-            "", view_labels,
+            " ", view_labels,
             selection_mode="single",
             default=view_labels[view_keys.index(st.session_state[state_key])]
                     if st.session_state[state_key] in view_keys else view_labels[default_idx],
@@ -1136,7 +1137,7 @@ def _subview_radio(view_keys, view_labels, state_key, default_idx=0):
     except Exception:
         # Fallback: 传统 radio(云端 1.39)
         _sel = st.radio(
-            "", view_labels,
+            " ", view_labels,
             index=view_keys.index(st.session_state[state_key])
                   if st.session_state[state_key] in view_keys else default_idx,
             horizontal=True, label_visibility="collapsed",
