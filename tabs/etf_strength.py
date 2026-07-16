@@ -499,7 +499,7 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
     df_view = _prepare_list_view(df_res, label_filter, tuple(cat_filter))
 
     # === 单行布局: 全行业 · 共 X 只 · 排序首位 ===
-    # 比例: 行业筛选 5 · 标的数 2 · 排序首位 3
+    # 比例: 行业筛选 4 · 标的数 2 · 排序首位 4
     if cats:
         col_filter, col_count, col_top = st.columns([4, 2, 4], gap="small")
     else:
@@ -559,20 +559,30 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
         if top is not None:
             s = LABEL_STYLES.get(top["strength_label"])
             glow = s["glow"] if s else TEXT_MUTED
+            bg = s["bg"] if s else BORDER_HI
+            fg = s["fg"] if s else TEXT
             # 名称超 8 字时截断(防止挤压)
             name_disp = top["name"]
-            if len(name_disp) > 10:
-                name_disp = name_disp[:9] + "…"
+            if len(name_disp) > 8:
+                name_disp = name_disp[:7] + "…"
+            # 三段式布局: [排序首位 label] [代码 + 名称] [趋势 chip]
+            # 趋势 chip 独立 flex-shrink:0 不被挤压
             st.markdown(
-                f'<div style="display:flex;align-items:center;justify-content:flex-end;'
-                f'height:40px;padding:0 10px;background:{BG_PANEL};border:1px solid {BORDER};'
-                f'border-radius:6px;gap:6px;overflow:hidden;">'
+                f'<div style="display:flex;align-items:center;gap:6px;height:40px;">'
+                # 趋势 chip 靠右
+                f'<span style="flex-shrink:0;background:{bg};color:{fg};'
+                f'padding:3px 8px;border-radius:4px;font-size:10px;'
+                f'font-weight:600;line-height:1.2;">{top["strength_label"]}</span>'
+                # 代码 + 名称 (剩余空间)
+                f'<span style="flex:1;min-width:0;display:flex;align-items:center;'
+                f'justify-content:flex-end;gap:6px;background:{BG_PANEL};border:1px solid {BORDER};'
+                f'border-radius:6px;padding:0 10px;height:100%;overflow:hidden;">'
                 f'<span style="color:{TEXT_DIM};font-size:10px;flex-shrink:0;">排序首位</span>'
                 f'<span style="color:{TEXT};font-size:13px;font-weight:600;'
                 f'font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
                 f'flex-shrink:1;min-width:0;">{top["code"]} {name_disp}</span>'
-                f'<span style="color:{glow};font-weight:600;font-size:10px;flex-shrink:0;">'
-                f'· {top["strength_label"]}</span></div>',
+                f'</span>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
         else:
@@ -644,40 +654,51 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         arrow = "▲" if is_in else "▼"
         sign = "+" if pp > 0 else ""
         ls = LABEL_STYLES.get(label)
-        # 趋势档位名做小角标(灰底),突出方向色块
         tag_bg = ls["bg"] if ls else BORDER_HI
         tag_fg = ls["fg"] if ls else TEXT_MUTED
         return (
-            f'<span style="display:inline-flex;align-items:center;gap:6px;'
-            f'background:{accent}1f;color:{accent};'
-            f'padding:2px 8px;border-radius:10px;'
+            f'<span style="display:inline-flex;align-items:center;gap:5px;'
+            f'background:{accent}1a;color:{accent};'
+            f'padding:2px 8px;border-radius:4px;'
             f'font-size:11px;font-weight:700;margin-right:6px;'
-            f'border:1px solid {accent}55;">'
-            f'<span style="font-size:10px;line-height:1;">{arrow}</span>'
+            f'border:1px solid {accent}33;">'
+            f'<span style="font-size:11px;line-height:1;">{arrow}</span>'
             f'<span>{sign}{pp:.1f}pp</span>'
             f'<span style="background:{tag_bg};color:{tag_fg};'
-            f'padding:0 5px;border-radius:4px;font-size:10px;'
+            f'padding:0 5px;border-radius:3px;font-size:9px;'
             f'font-weight:600;letter-spacing:0.3px;">{label}</span>'
             f'</span>'
         )
 
+    # 新设计: 左红右绿 · 中间分隔线 · 顶部标签 / 底部 chip
+    # 扫读一眼就知道哪个方向强
+    in_arrow = "▲"
+    out_arrow = "▼"
     banner_html = (
-        f'<div style="display:flex;align-items:center;gap:12px;margin-top:8px;'
-        f'background:linear-gradient(90deg,rgba(255,77,79,0.06),rgba(34,197,94,0.06));'
-        f'border:1px solid {BORDER};border-radius:6px;padding:8px 12px;">'
-        f'<span style="font-size:13px;">🚨 <b style="color:{TEXT};">板块异动</b></span>'
-        f'<span style="color:{TEXT_DIM};font-size:11px;display:inline-flex;'
-        f'align-items:center;gap:6px;">'
-        f'<span style="color:{ACCENT_UP};font-weight:700;'
-        f'background:{ACCENT_UP}14;padding:1px 7px;border-radius:4px;'
-        f'border:1px solid {ACCENT_UP}33;">▲ 资金流入</span> '
-        f'{_chip(top_in[0], top_in[1], "in")} '
-        f'<span style="color:{TEXT_DIM};">·</span> '
-        f'<span style="color:{ACCENT_DN};font-weight:700;'
-        f'background:{ACCENT_DN}14;padding:1px 7px;border-radius:4px;'
-        f'border:1px solid {ACCENT_DN}33;">▼ 资金流出</span> '
+        f'<div style="display:flex;align-items:stretch;gap:0;margin-top:8px;'
+        f'border:1px solid {BORDER};border-radius:6px;overflow:hidden;'
+        f'background:{BG_PANEL};">'
+        # 左:资金流入 (红色调)
+        f'<div style="flex:1;padding:10px 14px;'
+        f'background:linear-gradient(90deg,rgba(255,77,79,0.10),rgba(255,77,79,0.02));'
+        f'border-right:1px solid {BORDER};">'
+        f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
+        f'<span style="color:{ACCENT_UP};font-size:13px;font-weight:700;">{in_arrow} 资金流入</span>'
+        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;'
+        f'letter-spacing:0.5px;margin-left:auto;">inflow</span>'
+        f'</div>'
+        f'{_chip(top_in[0], top_in[1], "in")}'
+        f'</div>'
+        # 右:资金流出 (绿色调)
+        f'<div style="flex:1;padding:10px 14px;'
+        f'background:linear-gradient(90deg,rgba(34,197,94,0.02),rgba(34,197,94,0.10));">'
+        f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
+        f'<span style="color:{ACCENT_DN};font-size:13px;font-weight:700;">{out_arrow} 资金流出</span>'
+        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;'
+        f'letter-spacing:0.5px;margin-left:auto;">outflow</span>'
+        f'</div>'
         f'{_chip(top_out[0], top_out[1], "out")}'
-        f'</span>'
+        f'</div>'
         f'</div>'
     )
 
@@ -783,19 +804,28 @@ def render_kpi(df: pd.DataFrame, df_hist: pd.DataFrame | None = None):
                 diff = pct_size - prev_pct
                 if abs(diff) >= 0.05:
                     arrow = "▲" if diff > 0 else "▼"
-                    arrow_color = (ls["glow"] if ls else TEXT) if diff > 0 else "#22c55e"
+                    arrow_color = ACCENT_UP if diff > 0 else ACCENT_DN
                     delta_html = (
-                        f' <span style="color:{arrow_color};font-size:10px;font-weight:600;">'
-                        f'{arrow}{abs(diff):.1f}pp</span>'
+                        f'<span style="color:{arrow_color};font-size:9px;font-weight:700;'
+                        f'background:{arrow_color}1a;padding:0 3px;border-radius:2px;'
+                        f'margin-left:2px;line-height:1.2;">{arrow}{abs(diff):.1f}pp</span>'
                     )
 
+        # 两行布局: line1 资金 (亿 + %) + Δpp, line2 计数占比 (只 + %)
+        # 字号 10px, 主要数据加粗高亮
+        glow = ls["glow"] if ls else TEXT
         rich_sub = (
-            f'{size:,.0f}亿 · '
-            f'<span style="color:{ls["glow"] if ls else TEXT};font-weight:600;">'
-            f'{pct_size:.1f}%资金</span>'
+            f'<div style="line-height:1.4;">'
+            f'<div>'
+            f'<span style="color:{glow};font-weight:700;font-size:11px;font-family:monospace;">'
+            f'{size:,.0f}亿</span>'
+            f'<span style="color:{TEXT_DIM};font-size:10px;margin-left:3px;">'
+            f'·{pct_size:.1f}%资金</span>'
             f'{delta_html}'
-            f'<span style="color:{TEXT_DIM};font-size:9px;margin-left:4px;">'
-            f'({count}只·{pct_count:.0f}%)</span>'
+            f'</div>'
+            f'<div style="color:{TEXT_DIM};font-size:9px;font-family:monospace;margin-top:1px;">'
+            f'{count}只·{pct_count:.0f}%</div>'
+            f'</div>'
         )
         with cols[i]:
             st.markdown(kpi_card(
@@ -864,6 +894,15 @@ def render_stock_detail(df_res: pd.DataFrame):
         # 回到顶部后会丢，事后同步回去
         if selected:
             st.session_state.stock_detail_selected = selected
+        # 🔥 热门 chip 点过后：selected 可能为 None, selected fallback 为 chip_code 对应 label
+        if not selected and st.session_state.stock_detail_analysed_code:
+            _chip_label = None
+            for _lbl in search_items:
+                if _lbl.startswith(st.session_state.stock_detail_analysed_code):
+                    _chip_label = _lbl
+                    break
+            if _chip_label:
+                selected = _chip_label
     with c2:
         go_btn = st.button(
             "🔍 分析",
@@ -872,59 +911,50 @@ def render_stock_detail(df_res: pd.DataFrame):
             key="stock_detail_go",
         )
 
+    # 🔥 热门 chip 点过后：selected 有值但 go_btn=False → 免敲门
+    if selected and not go_btn and st.session_state.stock_detail_analysed_code:
+        _sel_code = selected.split()[0].strip().zfill(6)
+        if _sel_code == st.session_state.stock_detail_analysed_code:
+            go_btn = True  # 走“分析”路径
+
     # 用户未首次点击「分析」且 session_state 中有最近看过的 code —— 自动恢复
     if not go_btn and not st.session_state.stock_detail_analysed:
-        # === 热门 ETF 示例 · 按交易额选 top 6 ===
+        # === 热门 ETF 示例 · 按交易额选 top 6 · 真实 st.button ===
         try:
             _top = df_res.sort_values("latest_amount", ascending=False).head(6)
-            _chips = []
-            for _, r in _top.iterrows():
-                c = str(r["code"]).zfill(6)
-                n = str(r.get("name", ""))
-                lbl = f"{c} {n[:7]}"
-                _chips.append(
-                    f'<button class="hot-etf-chip" data-code="{c}" '
-                    f'style="background:{BG_PANEL_HI};color:{TEXT};border:1px solid {BORDER};'
-                    f'border-radius:16px;padding:5px 12px;font-size:11px;font-family:monospace;'
-                    f'cursor:pointer;transition:all 0.15s;">{lbl}</button>'
-                )
-            hot_html = (
-                '<div style="margin-top:14px;padding:14px 16px;'
-                f'background:{BG_PANEL};border:1px dashed {BORDER_HI};border-radius:8px;">'
-                f'<div style="color:{TEXT_DIM};font-size:11px;margin-bottom:8px;'
-                f'text-transform:uppercase;letter-spacing:0.5px;">🔥 热门 ETF · 点选快速查看</div>'
-                '<div style="display:flex;flex-wrap:wrap;gap:6px;">'
-                + "".join(_chips) +
-                '</div></div>'
-            )
             st.markdown(
-                f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;padding:30px 0 4px;">'
-                f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>·K 线图加载后自动滚到下方</div>'
-                + hot_html,
+                f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;padding:30px 0 8px;">'
+                f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>·K 线图加载后自动滚到下方'
+                f'</div>'
+                f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:8px;'
+                f'text-transform:uppercase;letter-spacing:0.5px;text-align:center;">🔥 热门 ETF · 一键加载</div>',
                 unsafe_allow_html=True,
             )
-            # JS 绑定 chip 点击 → 写入 selectbox 然后点 分析
-            st.markdown("""
-            <script>
-            (function(){
-              var btns = document.querySelectorAll('.hot-etf-chip');
-              btns.forEach(function(b){
-                b.addEventListener('mouseenter', function(){ b.style.background = '#1f2638'; b.style.borderColor = '#ff4d4f'; });
-                b.addEventListener('mouseleave', function(){ b.style.background = '#1a2030'; b.style.borderColor = '#1f2638'; });
-                b.addEventListener('click', function(){
-                  var code = b.getAttribute('data-code');
-                  // 通过 query string 跳转 (简单直接)
-                  var inputs = window.parent.document.querySelectorAll('[data-baseweb="select"] input');
-                  if (inputs.length) {
-                    inputs[0].focus();
-                    inputs[0].value = code;
-                    inputs[0].dispatchEvent(new Event('input', {bubbles:true}));
-                  }
-                });
-              });
-            })();
-            </script>
-            """, unsafe_allow_html=True)
+            _cols = st.columns(6, gap="small")
+            for i, (_, r) in enumerate(_top.iterrows()):
+                with _cols[i]:
+                    _code = str(r["code"]).zfill(6)
+                    _name = str(r.get("name", ""))[:6]
+                    _clicked = st.button(
+                        f"🔥 {_code}",
+                        key=f"hot_chip_{_code}",
+                        help=f"{_name} · 点击直接加载 K 线",
+                        use_container_width=True,
+                    )
+                    if _clicked:
+                        _full_label = f"{_code} {r.get('name','')}"
+                        st.session_state.stock_detail_selected = _full_label
+                        # 设 selectbox widget state · streamlit 1.58 接受
+                        st.session_state["stock_detail_search"] = _full_label
+                        st.session_state.stock_detail_analysed = True
+                        st.session_state.stock_detail_analysed_code = _code
+                        st.rerun()
+            # 名称副标签
+            _sub_html = '<div style="display:flex;gap:6px;margin-top:4px;">'
+            for i in range(len(_top)):
+                _sub_html += f'<div style="flex:1;text-align:center;color:{TEXT_DIM};font-size:9px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px;">{str(_top.iloc[i].get("name",""))[:5]}</div>'
+            _sub_html += '</div>'
+            st.markdown(_sub_html, unsafe_allow_html=True)
         except Exception:
             st.markdown(
                 f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
@@ -935,11 +965,25 @@ def render_stock_detail(df_res: pd.DataFrame):
         st.text_input("_stock_detail_hidden", label_visibility="collapsed", disabled=True, key="_hidden_widget")
         return
 
-    # 若 session_state 中存了上次分析的 code,可以跨 Tab 恢复
+    # 若 session_state 中存了上次分析的 code,可以跨 Tab 恢复 (选中或热门 chip 点过)
     if not selected and st.session_state.stock_detail_analysed_code:
-        selected = st.session_state.stock_detail_analysed_code
+        # 从 analysed_code 反查 full label
+        for _lbl in search_items:
+            if _lbl.startswith(st.session_state.stock_detail_analysed_code):
+                selected = _lbl
+                break
+
+    # 🔥 热门 chip 点击直接走了：selected 有了但 go_btn 是 False → 免敲门
+    if selected and not go_btn:
+        _sel_code = selected.split()[0].strip().zfill(6)
+        # 如果该 selected 是刚由 chip 设置的,免敲门
+        if _sel_code == st.session_state.get("stock_detail_analysed_code"):
+            # 但 chip 后的首次 render 默认走 chips 分支,不会到这里
+            # 这里只是备份闸
+            pass
+
     if not selected or not go_btn:
-        # 未点击「分析」 && session 也没缓存 code  —— 占位提示
+        # 未点击【分析】&& session 也没缓存 code  —— 占位提示
         st.session_state.stock_detail_analysed = False
         st.markdown(
             f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'

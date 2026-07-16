@@ -101,10 +101,11 @@ st.markdown(f"""
     color: {TEXT};
   }}
   .stTabs [aria-selected="true"] {{
-    background: {BG_PANEL};
+    background: linear-gradient(180deg,{BG_PANEL_HI}66,{BG_PANEL});
     color: {TEXT};
-    font-weight: 600;
+    font-weight: 700;
     border-bottom: 2px solid {ACCENT_UP};
+    box-shadow: inset 0 -1px 0 {ACCENT_UP}33;
   }}
 
   /* Radio / Segmented Control(子视图切换)— 字重加强 */
@@ -228,9 +229,16 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
       '<div style="display:flex;align-items:center;gap:10px;">'
         + logo_svg +
         '<div style="display:flex;flex-direction:column;gap:1px;">'
-          '<span style="margin:0;font-size:18px;font-weight:700;'
-               f'color:{TEXT};letter-spacing:-0.3px;line-height:1.1;">🐑 羊羊股市监测</span>'
-          '<span style="color:{TEXT_DIM};font-size:11px;font-weight:400;">A股ETF·趋势分析</span>'
+          '<span style="margin:0;font-size:24px;font-weight:700;'
+               f'letter-spacing:-0.4px;line-height:1.1;white-space:nowrap;'
+               f'display:inline-flex;align-items:baseline;gap:6px;">'
+          f'<span style="color:{TEXT};font-size:20px;line-height:1;">🐑</span>'
+          f'<span style="background:linear-gradient(135deg,#fb923c 0%,#f43f5e 55%,#ec4899 100%);'
+          f'-webkit-background-clip:text;background-clip:text;'
+          f'-webkit-text-fill-color:transparent;color:transparent;">羊羊</span>'
+          f'<span style="color:{TEXT};">股市监测</span>'
+          '</span>'
+          '<span style="color:{TEXT_DIM};font-size:12px;font-weight:400;margin-top:1px;">A股ETF·趋势分析</span>'
         '</div>'
       '</div>'
       '<div style="margin-left:auto;display:flex;align-items:center;gap:6px;'
@@ -478,30 +486,30 @@ def _render_status_strip(df_res, df_hist):
 
     countdown_ph = st.empty()
     countdown_ph.markdown(
-        f'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;'
-        f'margin:6px 0 14px;padding:9px 14px;'
+        f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;'
+        f'margin:4px 0 10px;padding:6px 12px;height:34px;'
         f'background:{BG_PANEL};border:1px solid {BORDER};border-radius:6px;'
         f'font-size:11px;color:{TEXT_MUTED};">'
-        f'<span style="display:inline-flex;align-items:center;gap:5px;">'
-        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">⏱ 下次自动刷新</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:4px;">'
+        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;letter-spacing:0.5px;">⏱ 下次刷新</span>'
         f'<span id="_cnt" style="color:{ACCENT_UP};font-family:monospace;font-weight:700;'
-        f'font-size:12px;background:{ACCENT_UP}14;padding:1px 7px;border-radius:4px;">{countdown_str}</span>'
+        f'font-size:11px;background:{ACCENT_UP}14;padding:0 6px;border-radius:3px;">{countdown_str}</span>'
         f'</span>'
         f'<span style="color:{BORDER_HI};">|</span>'
-        f'<span style="display:inline-flex;align-items:center;gap:5px;">'
-        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">📅 趋势最新</span>'
-        f'<span style="color:{TEXT};font-family:monospace;font-weight:600;font-size:12px;">{last_date}</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:4px;">'
+        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;letter-spacing:0.5px;">📅 趋势</span>'
+        f'<span style="color:{TEXT};font-family:monospace;font-weight:600;font-size:11px;">{last_date}</span>'
         f'</span>'
         f'<span style="color:{BORDER_HI};">|</span>'
-        f'<span style="display:inline-flex;align-items:center;gap:5px;">'
-        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">🔄 本次刷新</span>'
-        f'<span style="color:{TEXT};font-family:monospace;font-weight:600;font-size:12px;">{fetched_at}</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:4px;">'
+        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;letter-spacing:0.5px;">🔄 刷新</span>'
+        f'<span style="color:{TEXT};font-family:monospace;font-weight:600;font-size:11px;">{fetched_at}</span>'
         f'</span>'
         f'<span style="color:{BORDER_HI};">|</span>'
-        f'<span style="display:inline-flex;align-items:center;gap:5px;">'
-        f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;letter-spacing:0.5px;">✓ 数据完整度</span>'
-        f'<span style="color:{ACCENT_UP if n_zero == 0 else "#f59e0b"};font-family:monospace;font-weight:700;font-size:12px;'
-        f'background:{(ACCENT_UP if n_zero == 0 else "#f59e0b")}14;padding:1px 7px;border-radius:4px;">'
+        f'<span style="display:inline-flex;align-items:center;gap:4px;">'
+        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;letter-spacing:0.5px;">✓ 完整度</span>'
+        f'<span style="color:{ACCENT_UP if n_zero == 0 else "#f59e0b"};font-family:monospace;font-weight:700;font-size:11px;'
+        f'background:{(ACCENT_UP if n_zero == 0 else "#f59e0b")}14;padding:0 6px;border-radius:3px;">'
         f'{n_total - n_zero}/{n_total}</span>'
         f'</span>'
         f'</div>',

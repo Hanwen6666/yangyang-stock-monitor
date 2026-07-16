@@ -38,6 +38,130 @@ def write_csv(path, rows, fieldnames):
             w.writerow(r)
 
 
+def _date_int_to_iso(d: str) -> str:
+    """YYYYMMDD -> YYYY-MM-DD;原样穿透其他格式"""
+    s = str(d).replace("-", "").replace("/", "")[:8]
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return str(d)
+
+
+def _build_trend_history_from_klines(klines: dict, name_map: dict, n_days: int = 25):
+    """用本地 K 线缓存重新生成趋势历史(最近 n_days 个交易日的标签)。
+
+    返回:(hist_rows, hist_dates_iso)
+      - hist_rows: List[dict],每个 key = f"d_{ISO_date}",value = 标签
+      - hist_dates_iso: 最近 n_days 的 ISO 日期串 ["2026-07-04", ...]
+    """
+    import numpy as np
+    sys.path.insert(0, str(Path(__file__).parent))
+    from lib import algorithm as _algo
+
+    if not klines:
+        return [], []
+
+    # 选 K 线最长的一只作为日期基准 (日期应对齐所有 ETF)
+    pivot_code = max(klines.keys(), key=lambda c: len(klines[c]) if klines.get(c) is not None else 0)
+    pivot_k = klines.get(pivot_code)
+    if pivot_k is None or "date" not in pivot_k.columns or len(pivot_k) < n_days:
+        return [], []
+
+    dates = pd.to_datetime(pivot_k["date"]).dt.strftime("%Y-%m-%d").tolist()
+    hist_dates = dates[-n_days:]
+
+    rows = []
+    for code, kw in klines.items():
+        if kw is None or len(kw) < 20:
+            row = {"code": str(code).zfill(6), "name": name_map.get(str(code).zfill(6), str(code))}
+            for d in hist_dates:
+                row[f"d_{d}"] = "未知"
+            rows.append(row)
+            continue
+
+        close = kw["close"].astype(float).values
+        high = kw["high"].astype(float).values if "high" in kw.columns else close
+        low = kw["low"].astype(float).values if "low" in kw.columns else close
+
+        try:
+            labels_25 = _algo._compute_sliding_labels(close, high, low, n_windows=n_days)
+        except Exception:
+            labels_25 = ["横盘震荡"] * n_days
+
+        # 取最后 n_days 个标签(可能不足,前置补位)
+        if len(labels_25) < n_days:
+            labels_25 = (["横盘震荡"] * (n_days - len(labels_25))) + list(labels_25)
+        labels_25 = labels_25[-n_days:]
+
+        code6 = str(code).zfill(6)
+        row = {"code": code6, "name": name_map.get(code6, code6)}
+        for d, lbl in zip(hist_dates, labels_25):
+            row[f"d_{d}"] = lbl if lbl else "横盘震荡"
+        rows.append(row)
+
+    return rows, hist_dates
+
+
+def _load_kline_cache_for_trend():
+    """复用 recompute_locally 的 K 线 pickle 缓存;没有就跑一次最便宜的预热。
+
+    返回 (klines_dict, name_map)。失败时返回空 dict,不抛。
+    """
+    import pickle
+    from datetime import date as _date_cls
+    sys.path.insert(0, str(Path(__file__).parent))
+    from lib import algorithm as _algo
+
+    cache_dir = DATA_DIR / ".kline_cache"
+    cache_dir.mkdir(exist_ok=True)
+    cache_key = _date_cls.today().strftime("%Y%m%d")
+    cache_path = cache_dir / f"klines_{cache_key}.pkl"
+    kline_cache = {}
+    if cache_path.exists():
+        try:
+            with cache_path.open("rb") as f:
+                kline_cache = pickle.load(f)
+        except Exception:
+            kline_cache = {}
+
+    # 决定要现拉的 ETF 列表(从 etf_pool.csv)
+    pool_path = DATA_DIR / "etf_pool.csv"
+    if pool_path.exists():
+        pool = pd.read_csv(pool_path, dtype={"代码": str})
+        codes = pool["代码"].tolist()
+    else:
+        codes = list(kline_cache.keys())
+
+    to_fetch = [c for c in codes if c not in kline_cache or kline_cache.get(c) is None]
+    if to_fetch:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            fut_map = {pool.submit(_algo.fetch_kline, c, 250): c for c in to_fetch}
+            for fut in as_completed(fut_map):
+                code = fut_map[fut]
+                try:
+                    kw = fut.result()
+                except Exception:
+                    kw = None
+                if kw is not None and len(kw) >= 100:
+                    kw = kw.dropna(subset=["close"]).reset_index(drop=True)
+                    if len(kw) < 250:
+                        pad_needed = 250 - len(kw)
+                        first_row = kw.iloc[:1].copy()
+                        pads = pd.concat([first_row] * pad_needed, ignore_index=True)
+                        kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
+                    kline_cache[code] = kw
+
+    # 落盘(就算空也好,标个 mtime,避免下次误判)
+    try:
+        with cache_path.open("wb") as f:
+            pickle.dump(kline_cache, f)
+    except Exception:
+        pass
+
+    name_map, _, _ = _load_pool_meta()
+    return kline_cache, name_map
+
+
 def _load_pool_meta():
     """加载 ETF 池元数据(name_map, fund_size_map, cat_map),模块级缓存"""
     name_map = {}
@@ -226,6 +350,21 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
         # 补全后再写一次 CSV（有腾讯回填的最新价 / 成交额）
         write_csv(DATA_DIR / "results.csv", rows, cols)
 
+        # === 【关键修复】用本地 K 线重新生成趋势历史 (同步,使用真实日期) ===
+        # 旧 bug: API 端 /trend-history 返回的 dates 滞后,导致趋势演变列停在旧日期;
+        #         之前依赖后台 recompute 异步补,但常常失败/被忽略,导致用户刷新后仍看到旧日期。
+        # 这里直接同步生成 trend history 的"真实日期版本",保证 asof 与趋势演变日期一致。
+        try:
+            klines, name_map = _load_kline_cache_for_trend()
+            hist_rows_local, hist_dates_local = _build_trend_history_from_klines(klines, name_map, n_days=25)
+            if hist_rows_local and hist_dates_local:
+                hist_cols = ["code", "name"] + [f"d_{d}" for d in hist_dates_local]
+                write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows_local, hist_cols)
+                points = [f"d_{d}" for d in hist_dates_local]
+        except Exception as _e_trend:
+            # 失败不阻断主流程,保留 API 版
+            print(f"[refresh_data] 本地趋势历史生成失败,保留 API 版本: {_e_trend}")
+
         if not asof:
             asof = datetime.now().strftime("%Y%m%d")
         (DATA_DIR / ".asof").write_text(asof, encoding="utf-8")
@@ -323,10 +462,14 @@ def recompute_locally(codes=None, progress_cb=None):
         # 计算所有指标 + 25 天历史
         metrics_rows = []
         hist_rows = []
-        # 确定 25 天日期列名
-        # 从第一只 K 线获取日期区间
-        first_k = list(kline_cache.values())[0] if kline_cache else None
-        if first_k is not None:
+        # 确定 25 天日期列名 — 选最长 K 线作 pivot (避免 dict 插入顺序导致日期偏老)
+        if kline_cache:
+            pivot_code = max(kline_cache.keys(),
+                              key=lambda c: len(kline_cache[c]) if kline_cache.get(c) is not None else 0)
+            first_k = kline_cache.get(pivot_code)
+        else:
+            first_k = None
+        if first_k is not None and "date" in first_k.columns:
             dates = pd.to_datetime(first_k["date"]).dt.strftime("%Y%m%d").tolist()
             # 取最后 25 个交易日作为历史点
             hist_dates = dates[-(25):] if len(dates) >= 25 else dates

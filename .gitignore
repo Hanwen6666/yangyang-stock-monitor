@@ -1,8 +1,10 @@
 data/.kline_cache/
+data/.a_kline_cache/
 data/.asof
 data/.recompute_done
 __pycache__/
 *.pyc
+*.pkl
 .env
 *.log
 data/results.csv

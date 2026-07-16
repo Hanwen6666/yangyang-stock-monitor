@@ -11,6 +11,7 @@ Tabs 模块 — 业务 Tab 集合
 import streamlit as st
 
 from . import etf_strength  # noqa: F401
+from . import strength_rotation  # noqa: F401
 
 # Tab 注册表 — 新 Tab 加这里即可
 TABS = [
@@ -27,6 +28,13 @@ TABS = [
         "module": etf_strength,
         "render": "render_history",
         "icon": "🔥",
+    },
+    {
+        "key": "strength_rotation",
+        "label": "强势股轮动",
+        "module": strength_rotation,
+        "render": "render",
+        "icon": "🎯",
     },
     {
         "key": "etf_individual",
