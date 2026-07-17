@@ -952,24 +952,34 @@ def render_stock_detail(df_res: pd.DataFrame):
                 unsafe_allow_html=True,
             )
             _cols = st.columns(6, gap="small")
+
+            def _make_chip_handler(_full_label, _code):
+                def _handler():
+                    # [FIX] Bug #11 - use on_click callback instead of post-button check
+                    # The previous code did `if _clicked: st.session_state.X = Y` which
+                    # ran DURING the same render pass - but with streamlit 1.40+ selectbox
+                    # widget, the second render after st.rerun() didn't sync widget state,
+                    # so selected stayed empty and the chips branch kept rendering.
+                    # Callback runs in a guaranteed pre-rerun context.
+                    st.session_state.stock_detail_selected = _full_label
+                    st.session_state.stock_detail_analysed = True
+                    st.session_state.stock_detail_analysed_code = _code
+                    # Keep the selectbox widget key in sync too, for fallback display.
+                    st.session_state["stock_detail_search"] = _full_label
+                return _handler
+
             for i, (_, r) in enumerate(_top.iterrows()):
                 with _cols[i]:
                     _code = str(r["code"]).zfill(6)
                     _name = str(r.get("name", ""))[:6]
-                    _clicked = st.button(
+                    _full_label = f"{_code} {r.get('name','')}"
+                    st.button(
                         f"🔥 {_code}",
                         key=f"hot_chip_{_code}",
                         help=f"{_name} · 点击直接加载 K 线",
                         use_container_width=True,
+                        on_click=_make_chip_handler(_full_label, _code),
                     )
-                    if _clicked:
-                        _full_label = f"{_code} {r.get('name','')}"
-                        st.session_state.stock_detail_selected = _full_label
-                        # 设 selectbox widget state · streamlit 1.58 接受
-                        st.session_state["stock_detail_search"] = _full_label
-                        st.session_state.stock_detail_analysed = True
-                        st.session_state.stock_detail_analysed_code = _code
-                        st.rerun()
             # 名称副标签
             _sub_html = '<div style="display:flex;gap:6px;margin-top:4px;">'
             for i in range(len(_top)):
