@@ -944,15 +944,32 @@ def generate_daily_orders(
     bench_dates = benchmark["date"].astype(str).values
     bench_closes = benchmark["close"].astype(float).values
     if asof_date is None:
-        # 默认用 K 线交集的最末一个交易日(避免 K 线未覆盖最近一两天)
-        last_kline_date = None
+        # [FIX] Bug #3 - asof date was 21 days stale due to min() bug
+        # Original: used min(all_stock_last_dates) - this gets the bottleneck date,
+        #           easily stuck on a stale/suspended stock
+        # New: use 90th percentile of stock last dates (ignore bottom 10% stale stocks),
+        #      but never later than benchmark's last trading day.
+        # Fallback chain: p90 of stocks -> benchmark last day
+        from datetime import datetime as _dt
+        stock_last_dates = []
         for code, kl in klines.items():
             if kl is None or len(kl) < 200:
                 continue
             d = str(kl["date"].iloc[-1])
-            if last_kline_date is None or d < last_kline_date:
-                last_kline_date = d
-        asof_date = last_kline_date or bench_dates[-1]
+            try:
+                stock_last_dates.append(_dt.strptime(d, "%Y-%m-%d"))
+            except ValueError:
+                continue
+        bench_last = _dt.strptime(str(bench_dates[-1]), "%Y-%m-%d")
+        if stock_last_dates:
+            stock_last_dates.sort()
+            # 90th percentile
+            idx = int(len(stock_last_dates) * 0.9)
+            idx = min(idx, len(stock_last_dates) - 1)
+            p90 = stock_last_dates[idx]
+            asof_date = min(p90, bench_last).strftime("%Y-%m-%d")
+        else:
+            asof_date = str(bench_dates[-1])
     # 找 asof_date 对应的大盘索引
     asof_idx = None
     for i, d in enumerate(bench_dates):
@@ -1059,9 +1076,13 @@ def generate_daily_orders(
                 "reason": f"分数{row['score']:.1f}接近门槛{threshold}",
             })
 
-    # 调入候选: 今日 Top 30 之外最高分前 10 名
+    # [FIX] Bug #4 - add candidates should be strictly stronger than last of Top 30
+    # Before: just head(10) outside top, even same score shows as "stronger than last"
+    # After: only include scores STRICTLY GREATER than Top 30 last place
+    bottom_score = float(top_picks.iloc[-1]["score"]) if len(top_picks) else 0
     add_candidates = (
         df_candidate[~df_candidate["code"].isin(in_top_today)]
+        .loc[lambda d: d["score"] > bottom_score]
         .head(10)
     )
     add_list = []
@@ -1071,7 +1092,7 @@ def generate_daily_orders(
             "price": round(float(row["close"]), 3),
             "score": round(float(row["score"]), 1),
             "alpha_5": round(float(row["alpha_5"]), 2),
-            "reason": f"score={row['score']:.1f} 强于 Top 30 末位",
+            "reason": f"score={row['score']:.1f} > Top 30 末位 {bottom_score:.1f}",
         })
 
     # 调仓总结

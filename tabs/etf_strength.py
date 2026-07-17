@@ -313,6 +313,11 @@ def render_table(df: pd.DataFrame):
       .etf-table th.sort-desc::after {{ content: ' ▼'; color: {ACCENT_DN}; }}
       .etf-table th:nth-child(2),
       .etf-table th:nth-child(3) {{ min-width: 80px; }}
+      /* [FIX] Bug #5 - 趋势/分类列宽度被挤压 */
+      .etf-table th:nth-child(3),
+      .etf-table td:nth-child(3) {{ min-width: 84px; }}
+      .etf-table th:nth-child(5),
+      .etf-table td:nth-child(5) {{ min-width: 72px; }}
       .etf-table th:last-child {{ text-align: right; }}
       .etf-table td {{
         padding: 7px 8px; border-bottom: 1px solid #151b2a;
@@ -362,19 +367,24 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
     default_n = 25
     date_options_rev = list(reversed(points))
     selected_points = date_options_rev[:min(default_n, len(date_options_rev))]
-    df = df_hist.copy()
 
-    # === 构建展示表(缓存加速) ===
+    # [FIX] Bug #1 - pool size mismatch
+    # etf_trend_history.csv contains 207 (incl delisted/suspended ETFs),
+    # but dashboard KPI shows df_res pool (results.csv = 197)
+    # Filter by df_res.code so history tab matches dashboard
+    valid_codes = set(df_res["code"].astype(str).str.zfill(6).tolist())
+    df = df_hist[df_hist["code"].astype(str).str.zfill(6).isin(valid_codes)].copy()
+
+    # === Build display (cached) ===
     _pts_tuple = tuple(points)
     _sel_dates_tuple = tuple(selected_points)
-    _lbl_filter_list = []  # 不再趋势筛选
+    _lbl_filter_list = []
 
-    # 首次拼 207×25=5175 个 span 会~1秒，加 spinner + 准迟避免闪屏
     import time
     t0 = time.time()
-    with st.spinner(f"拼装 {len(df_hist)}×{len(selected_points)} 趋势矩阵..."):
+    with st.spinner(f"build trend matrix {len(df)}x{len(selected_points)}..."):
         html_body, n_etf, n_days = _build_history_html(
-            df_hist, _pts_tuple, df_res, _sel_dates_tuple, _lbl_filter_list
+            df, _pts_tuple, df_res, _sel_dates_tuple, _lbl_filter_list
         )
     render_ms = int((time.time() - t0) * 1000)
 
@@ -683,19 +693,19 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         f'background:linear-gradient(90deg,rgba(255,77,79,0.10),rgba(255,77,79,0.02));'
         f'border-right:1px solid {BORDER};">'
         f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
-        f'<span style="color:{ACCENT_UP};font-size:13px;font-weight:700;">{in_arrow} 资金流入</span>'
+        f'<span style="color:{ACCENT_UP};font-size:13px;font-weight:700;">{in_arrow} 涨幅领跑</span>'
         f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;'
-        f'letter-spacing:0.5px;margin-left:auto;">inflow</span>'
+        f'letter-spacing:0.5px;margin-left:auto;">relative +pp</span>'
         f'</div>'
         f'{_chip(top_in[0], top_in[1], "in")}'
         f'</div>'
-        # 右:资金流出 (绿色调)
+        # 右:相对弱势 (绿色调)
         f'<div style="flex:1;padding:10px 14px;'
         f'background:linear-gradient(90deg,rgba(34,197,94,0.02),rgba(34,197,94,0.10));">'
         f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
-        f'<span style="color:{ACCENT_DN};font-size:13px;font-weight:700;">{out_arrow} 资金流出</span>'
+        f'<span style="color:{ACCENT_DN};font-size:13px;font-weight:700;">{out_arrow} 涨幅垫底</span>'
         f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;'
-        f'letter-spacing:0.5px;margin-left:auto;">outflow</span>'
+        f'letter-spacing:0.5px;margin-left:auto;">relative -pp</span>'
         f'</div>'
         f'{_chip(top_out[0], top_out[1], "out")}'
         f'</div>'
@@ -870,6 +880,17 @@ def render_stock_detail(df_res: pd.DataFrame):
         n = str(r.get("name", ""))
         search_items.append(f"{c} {n}")
 
+    # 🔧 修复：df_res 为空时 selectbox 会抛错中断后续渲染(切到个股分析 tab 出现整页空白)
+    # 提前 early return,显示占位提示
+    if not search_items:
+        st.markdown(
+            f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
+            f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
+            f'暂无可分析个股(数据未就绪)<br/>请稍后重试或点击顶部「🔄 数据刷新」</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
     # 🔧 修复：跨顶层 Tab 切换后 widget key 会丢，用 session_state 离冱
     # 初始化选中状态
     if "stock_detail_selected" not in st.session_state:
@@ -962,7 +983,6 @@ def render_stock_detail(df_res: pd.DataFrame):
                 f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
                 unsafe_allow_html=True,
             )
-        st.text_input("_stock_detail_hidden", label_visibility="collapsed", disabled=True, key="_hidden_widget")
         return
 
     # 若 session_state 中存了上次分析的 code,可以跨 Tab 恢复 (选中或热门 chip 点过)
@@ -991,7 +1011,6 @@ def render_stock_detail(df_res: pd.DataFrame):
             f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
             unsafe_allow_html=True,
         )
-        st.text_input("_stock_detail_hidden", label_visibility="collapsed", disabled=True, key="_hidden_widget")
         return
 
     st.session_state.stock_detail_analysed = True

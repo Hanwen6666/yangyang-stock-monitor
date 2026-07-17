@@ -97,10 +97,14 @@ def render_daily_orders(df_res, df_hist):
             color=ACCENT_UP,
         ), unsafe_allow_html=True)
     with k5:
+        # [FIX] Bug #4 - candidate semantics clearer
+        # original summary "调出 X 只, 调入 Y 只候选..." reads like real rebalance
+        n_cand_total = len(orders['sell_candidates']) + len(orders['add_candidates'])
         st.markdown(kpi_card(
-            title="📋 调仓", value=orders["summary"].replace("调出 ", "-").replace(" 调入 ", "+").replace("只", "").replace("候选 (实操时选最高分补入)", ""),
+            title="📋 调仓候选",
+            value=f"{n_cand_total} 只",
             sub=f"调出 {len(orders['sell_candidates'])} / 调入 {len(orders['add_candidates'])}",
-            color="#f59e0b" if (len(orders['sell_candidates']) + len(orders['add_candidates'])) > 0 else TEXT_MUTED,
+            color="#f59e0b" if n_cand_total > 0 else TEXT_MUTED,
         ), unsafe_allow_html=True)
 
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
