@@ -9,6 +9,7 @@ from html import escape
 
 from lib.constants import (
     BG_PANEL, BORDER, BORDER_HI, TEXT, TEXT_MUTED, TEXT_DIM,
+    ACCENT_UP, ACCENT_DN,  # 2026-07-20 重构: fmt_chg_html 需调色
     LABEL_STYLES,
     FONT_KPI_TITLE, FONT_KPI_VALUE, FONT_KPI_SUB,
     FONT_METRIC_TITLE, FONT_METRIC_VALUE,
@@ -188,3 +189,124 @@ def th_html(content: str, color: str = TEXT_MUTED, align: str = "left") -> str:
     """
     style = f"padding:6px 8px;text-align:{align};color:{color};font-size:11px;"
     return safe_html("th", content, style=style)
+
+# ============================================================================
+# 2026-07-20 重构: 列 formatter (从 tabs/etf_strength.py::render_table 内嵌函数抽离)
+# 老大每天看的"大盘总览"页核心, 之前 9 个匿名 fmt_xxx 函数埋在主函数体内不可测试
+# 现在抽出命名函数, 等价替换, 0 行为变化, +可独立 unit test
+# ============================================================================
+
+def fmt_code(v) -> str:
+    """代码列: 整数, 空值显示 '-'"""
+    try:
+        return f"{int(v)}"
+    except (ValueError, TypeError):
+        return "-"
+
+
+def fmt_name(v) -> str:
+    """名称列: 直接 str, 空值显示 '-'"""
+    if pd_isna(v):
+        return "-"
+    return str(v)
+
+
+def fmt_chg_html(v) -> str:
+    """涨跌幅列: 涨红跌绿(中国惯例),带背景色块, 已 XSS escape
+
+    Returns: <span style="color:...;font-weight:700;...>+1.23%</span>
+    """
+    if pd_isna(v):
+        return "-"
+    try:
+        v = float(v)
+    except (ValueError, TypeError):
+        return "-"
+    color = ACCENT_UP if v > 0 else (ACCENT_DN if v < 0 else TEXT_MUTED)
+    sign = "+" if v > 0 else ""
+    return (
+        f'<span style="color:{color};font-weight:700;'
+        f'font-family:monospace;background:{color}14;'
+        f'padding:1px 6px;border-radius:3px;'
+        f'font-feature-settings:&quot;tnum&quot;;">'
+        f'{sign}{v:.2f}%</span>'
+    )
+
+
+def fmt_price(v) -> str:
+    """最新价列: 3 位小数, 空值/0 显示 '-'"""
+    try:
+        f = float(v)
+        if f == 0:
+            return "-"
+        return f"{f:.3f}"
+    except (ValueError, TypeError):
+        return "-"
+
+
+def fmt_vol_yi(v) -> str:
+    """成交额列 (亿元单位智能切换): >=1e8 显示 X.X亿, >=1e4 显示 X.X万, 否则整数
+
+    对应原 _fmt_amount 函数
+    """
+    try:
+        yuan = float(v)
+        if yuan == 0:
+            return "-"
+        if yuan >= 1e8:
+            return f"{yuan/1e8:.2f}亿"
+        elif yuan >= 1e4:
+            return f"{yuan/1e4:.1f}万"
+        return f"{int(yuan)}"
+    except (ValueError, TypeError):
+        return "-"
+
+
+def fmt_vol_simple(v) -> str:
+    """成交量列 (简版): >=1e8 显示 X.X亿, >=1e4 显示 X.X万, 否则整数
+
+    对应原 fmt_vol 函数 (与 fmt_vol_yi 区别: fmt_vol 用 .1f 精度, fmt_vol_yi 用 .2f)
+    """
+    try:
+        vol = float(v)
+        if vol == 0:
+            return "-"
+        if vol >= 1e8:
+            return f"{vol/1e8:.1f}亿"
+        elif vol >= 1e4:
+            return f"{vol/1e4:.1f}万"
+        return f"{int(vol)}"
+    except (ValueError, TypeError):
+        return "-"
+
+
+def fmt_yi(v) -> str:
+    """规模列 (亿元, 1 位小数): 空值显示 '-'"""
+    try:
+        return f"{float(v):.1f}"
+    except (ValueError, TypeError):
+        return "-"
+
+
+def fmt_category(v) -> str:
+    """分类列: 简单文本"""
+    if pd_isna(v):
+        return "-"
+    return str(v)
+
+
+# 内部 helper: 兼容 pandas.isna 与 None (不依赖 pandas 避免循环 import)
+def pd_isna(v) -> bool:
+    """简化的 isnull 检查: None / NaN / 空字符串"""
+    if v is None:
+        return True
+    if isinstance(v, float):
+        try:
+            return v != v  # NaN != NaN
+        except Exception:
+            return False
+    if isinstance(v, str) and v == "":
+        return True
+    return False
+
+

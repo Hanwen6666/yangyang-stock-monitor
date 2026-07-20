@@ -23,7 +23,11 @@ from lib.constants import (  # noqa: E402
 )
 from lib import algorithm as algo
 from lib.chart_kline import _kline_chart_html
-from lib.ui_components import label_badge_html, kpi_card, metric_row_html
+from lib.ui_components import (
+    label_badge_html, kpi_card, metric_row_html,
+    fmt_code, fmt_name, fmt_chg_html, fmt_price,
+    fmt_vol_yi, fmt_vol_simple, fmt_yi, fmt_category,
+)  # 2026-07-20 重构: 9 个列 formatter 抽离
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -132,61 +136,19 @@ def render_table(df: pd.DataFrame):
     })
     show["趋势"] = show["趋势"].apply(label_badge_html)
 
-    # 格式化
-    def fmt_price(v):
-        if pd.isna(v) or float(v) == 0: return "-"
-        return f"{float(v):.3f}"
-
-    def fmt_vol(v):
-        if pd.isna(v) or float(v) == 0: return "-"
-        vol = float(v)
-        if vol >= 1e8:
-            return f"{vol/1e8:.1f}亿"
-        elif vol >= 1e4:
-            return f"{vol/1e4:.1f}万"
-        else:
-            return f"{int(vol)}"
-
-    def fmt_yi(v):
-        if pd.isna(v): return "-"
-        return f"{float(v):.1f}"
-
-    if "代码" in show.columns:
-        show["代码"] = show["代码"].apply(lambda v: f"{int(v)}" if pd.notna(v) else "-")
-    if "涨跌幅" in show.columns:
-        # 涨跌幅颜色: 涨红跌绿(中国惯例),带背景色块增强扫读对比
-        def _fmt_chg(v):
-            if pd.isna(v):
-                return "-"
-            try:
-                v = float(v)
-            except Exception:
-                return "-"
-            color = ACCENT_UP if v > 0 else (ACCENT_DN if v < 0 else TEXT_MUTED)
-            sign = "+" if v > 0 else ""
-            return (
-                f'<span style="color:{color};font-weight:700;'
-                f'font-family:monospace;background:{color}14;'
-                f'padding:1px 6px;border-radius:3px;'
-                f'font-feature-settings:&quot;tnum&quot;;">'
-                f'{sign}{v:.2f}%</span>'
-            )
-        show["涨跌幅"] = show["涨跌幅"].apply(_fmt_chg)
-    if "最新价" in show.columns:
-        show["最新价"] = show["最新价"].apply(fmt_price)
-    if "成交额(亿)" in show.columns:
-        def _fmt_amount(v):
-            if pd.isna(v) or float(v) == 0:
-                return "-"
-            yuan = float(v)
-            if yuan >= 1e8:
-                return f"{yuan/1e8:.2f}亿"
-            elif yuan >= 1e4:
-                return f"{yuan/1e4:.1f}万"
-            return f"{int(yuan)}"
-        show["成交额(亿)"] = show["成交额(亿)"].apply(_fmt_amount)
-    if "规模(亿)" in show.columns:
-        show["规模(亿)"] = show["规模(亿)"].apply(fmt_yi)
+    # 2026-07-20 重构: 9 个列 formatter 抽到 lib/ui_components, 加列只改 dict (OCP)
+    COLUMN_FORMATS = {
+        "代码": fmt_code,
+        "名称": fmt_name,
+        "涨跌幅": fmt_chg_html,
+        "最新价": fmt_price,
+        "成交额(亿)": fmt_vol_yi,
+        "规模(亿)": fmt_yi,
+        "分类": fmt_category,
+    }
+    for col_name, fmt_fn in COLUMN_FORMATS.items():
+        if col_name in show.columns:
+            show[col_name] = show[col_name].apply(fmt_fn)
 
     st.markdown(
         f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:4px;'
