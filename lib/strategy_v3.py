@@ -921,14 +921,49 @@ def loser_days_str(n: int) -> str:
 # ============================================================
 # 全市场 K 线缓存
 # ============================================================
+def _parse_kline_json(path) -> pd.DataFrame | None:
+    """2026-07-21 阶段 2 P1: 抽自 _load_local_klines, 解析单个 JSON 文件
+
+    Returns: DataFrame(date, open, close, high, low, volume) 或 None (无效)
+    """
+    stem = path.stem
+    if "_" not in stem:
+        return None
+    prefix, code = stem.split("_", 1)
+    if len(code) != 6 or not code.isdigit():
+        return None
+    try:
+        with path.open() as f:
+            raw = json.load(f)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    dates = sorted(raw.keys())
+    rows = []
+    for d in dates:
+        v = raw[d]
+        close = v.get("close")
+        if close is None or close == 0 or (isinstance(close, float) and math.isnan(close)):
+            continue
+        rows.append({
+            "date": d,
+            "open": float(v.get("open", 0) or 0),
+            "close": float(close),
+            "high": float(v.get("high", 0) or 0),
+            "low": float(v.get("low", 0) or 0),
+            "volume": float(v.get("volume", 0) or 0),
+        })
+    if len(rows) < 200:
+        return None
+    return pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+
+
 def _load_local_klines(codes: list | None = None,
                         progress_cb: Callable | None = None) -> dict:
-    """从本地 stock_kline/ 目录加载 K 线(2019-01 ~ 2026-07)
+    """从本地 stock_kline/ 目录加载 K 线 (2019-01 ~ 2026-07)
 
-    JSON 格式: {"2019-05-24": {"close": 3.01, "open": ..., "high": ..., "low": ..., "volume": 1000}, ...}
-    文件名格式: sh_600000.json / sz_000001.json / bj_920000.json
-
-    Returns: {code6: pd.DataFrame(date, open, close, high, low, volume)}
+    组装器: 调 _parse_kline_json 处理每个文件 + 收集结果
     """
     if not STOCK_KLINE_DIR.exists():
         return {}
@@ -937,7 +972,7 @@ def _load_local_klines(codes: list | None = None,
     files = list(STOCK_KLINE_DIR.glob("*.json"))
     total = len(files)
     for i, p in enumerate(files):
-        stem = p.stem  # e.g. sh_600000
+        stem = p.stem
         if "_" not in stem:
             continue
         prefix, code = stem.split("_", 1)
@@ -945,32 +980,10 @@ def _load_local_klines(codes: list | None = None,
             continue
         if codes is not None and code not in codes:
             continue
-        try:
-            with p.open() as f:
-                raw = json.load(f)
-            if not raw:
-                continue
-            dates = sorted(raw.keys())
-            rows = []
-            for d in dates:
-                v = raw[d]
-                close = v.get("close")
-                if close is None or close == 0 or (isinstance(close, float) and math.isnan(close)):
-                    continue
-                rows.append({
-                    "date": d,
-                    "open": float(v.get("open", 0) or 0),
-                    "close": float(close),
-                    "high": float(v.get("high", 0) or 0),
-                    "low": float(v.get("low", 0) or 0),
-                    "volume": float(v.get("volume", 0) or 0),
-                })
-            if len(rows) < 200:
-                continue
-            df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
-            out[code] = df
-        except Exception:
+        df = _parse_kline_json(p)
+        if df is None:
             continue
+        out[code] = df
 
         if progress_cb and (i + 1) % 200 == 0:
             progress_cb(i + 1, total, f"加载本地 K 线 {i+1}/{total}", None, "kline")
