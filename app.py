@@ -183,8 +183,12 @@ def load_results() -> pd.DataFrame:
     if not p.exists():
         return pd.DataFrame()
     df = pd.read_csv(p)
-    # 兼容旧 CSV 缺少 latest_close/latest_volume 字段
-    for col in ["latest_close", "latest_volume", "fund_size_yi", "latest_amount", "strength_label"]:
+    # 兼容旧 CSV 缺少以下字段 (默认填 0)
+    # NOTE: change_pct 是 fetch_data.py 数据管道结构性缺失字段
+    # (fetch_data.py:_build_results_csv_from_metrics 没算, lib/strategy_v3.py 也没算)
+    # 当前 fallback: 全 0 + 灰色 0.00% 渲染 = 老大一眼看出数据缺失, 立项修数据管道
+    # TODO: fetch_data.py::recompute_locally 应从 K 线拉昨日 close 算当日涨跌幅
+    for col in ["latest_close", "latest_volume", "fund_size_yi", "latest_amount", "strength_label", "change_pct"]:
         if col not in df.columns:
             df[col] = 0
     return df
