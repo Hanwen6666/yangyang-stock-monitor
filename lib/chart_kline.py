@@ -4,6 +4,8 @@ K线图组件 — TradingView lightweight-charts via CDN
 返回完整 HTML 字符串,调用方用 st.components.v1.html 嵌入。
 
 依赖: pandas + 不需要任何额外包(CDN 加载 lightweight-charts@4.2.1)
+
+【2026-07-20 阶段 2 靶点 2-A】重构 _kline_chart_html 361 行 → 4 个子函数
 """
 import json
 
@@ -18,14 +20,17 @@ from lib.constants import (
 )
 
 
-def _kline_chart_html(kw_250, amount_series=None) -> str:
-    """东财风格 K 线图(完整 HTML 字符串)
+# ============================================================================
+# 2026-07-20 阶段 2 靶点 2-A: 拆分 _kline_chart_html
+# 拆为 4 个子函数: 准备数据 + HTML head/body + JS script
+# 主函数变成组装器, 381 行 → 17 行
+# ============================================================================
 
-    kw_250: DataFrame 含 date/open/high/low/close/volume 列
-            要求 >= 60 行
-    amount_series: 可选 Series/array, 与 kw_250 同长度的真实成交额(元)。
-                   提供后 ohlcv 栏「成交额」会读这个值,而不是用
-                   volume * (high+low+close)/3 估算。
+def _prepare_chart_data(kw_250, amount_series):
+    """准备 K 线图所需的全部 JSON 数据
+
+    Returns:
+        tuple: (candle_json, vol_json, amt_json, ma_json, vol_ma_json, ma_color_js)
     """
     cl = kw_250["close"].astype(float).values
     op = kw_250["open"].astype(float).values
@@ -36,7 +41,7 @@ def _kline_chart_html(kw_250, amount_series=None) -> str:
     vol = kw_250["volume"].astype(float).values if "volume" in kw_250.columns else None
     n = len(cl)
 
-    # 真实成交额：按行对齐传进去
+    # 真实成交额: 按行对齐传进去
     amt_arr = None
     if amount_series is not None:
         try:
@@ -74,7 +79,7 @@ def _kline_chart_html(kw_250, amount_series=None) -> str:
 
     candle_json = json.dumps(candle_data)
     vol_json = json.dumps(vol_data)
-    # 真实成交额：有则传，None 表达为 null
+    # 真实成交额: 有则传, None 表达为 null
     if amt_arr is not None:
         amt_data = [{"time": date_strs[i], "value": amt_arr[i]}
                     for i in range(n) if amt_arr[i] is not None]
@@ -90,6 +95,14 @@ def _kline_chart_html(kw_250, amount_series=None) -> str:
     # MA 颜色 JS 字典
     ma_color_js = "{" + ",".join(f"{nd}: '{c}'" for nd, c in MA_COLORS.items()) + "}"
 
+    return candle_json, vol_json, amt_json, ma_json, vol_ma_json, ma_color_js
+
+
+def _build_html_head():
+    """HTML 头部 + CSS 样式 + toolbar + OHLCV bar (静态, 无参数)
+
+    颜色变量从 lib/constants 嵌入, 仅包含 layout 部分。
+    """
     return f'''<!DOCTYPE html>
 <html>
 <head>
@@ -144,7 +157,15 @@ def _kline_chart_html(kw_250, amount_series=None) -> str:
   <div class="item"><span class="label">涨跌额</span><span class="val" id="v_chg_amt">—</span></div>
   <div class="item"><span class="label">成交量</span><span class="val" id="v_vol">—</span></div>
   <div class="item"><span class="label">成交额</span><span class="val" id="v_amt">—</span></div>
-</div>
+</div>'''
+
+
+def _build_js_script(candle_json, vol_json, amt_json, ma_json, vol_ma_json, ma_color_js):
+    """完整 JS 渲染脚本: LightweightCharts 配置 + candleSeries/volSeries/maSeries/aggregate/setPeriod
+
+    注: 这是嵌入 HTML 的 JS 字符串, 不实际拆分成多个 JS 函数 (避免 Python f-string 转义复杂度)。
+    """
+    return f'''
 <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function(){{
@@ -379,3 +400,12 @@ def _kline_chart_html(kw_250, amount_series=None) -> str:
 </script>
 </body>
 </html>'''
+
+
+def _kline_chart_html(kw_250, amount_series=None) -> str:
+    """东财风格 K 线图(完整 HTML 字符串)
+
+    组装器: 调 3 个子函数拼装最终 HTML
+    """
+    data = _prepare_chart_data(kw_250, amount_series)
+    return _build_html_head() + _build_js_script(*data)
