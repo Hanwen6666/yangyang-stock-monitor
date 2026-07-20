@@ -36,6 +36,7 @@ sys.path.insert(0, str(_THIS.parent.parent))
 from lib.constants import (  # noqa: E402
     BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
+    CACHE_TTL_RECOMPUTE,  # 2026-07-20 重构: TTL 统一
 )
 from lib.ui_components import kpi_card  # noqa: E402
 from lib.ui_components import td_html, th_html  # noqa: E402  # 2026-07-20 重构: 表格 cell helper
@@ -290,7 +291,7 @@ def compute_market_regime(bench: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 # 策略核心: 每日打分 + Top 候选
 # ============================================================
-@st.cache_data(ttl=1800, show_spinner="计算因子 + 截面排名...")
+@st.cache_data(ttl=CACHE_TTL_RECOMPUTE, show_spinner="计算因子 + 截面排名...")
 def _compute_top_candidates_uncached(asof_date_str: str) -> pd.DataFrame:
     """截至 asof_date 的 Top 候选池 (向量化版)
 
@@ -469,7 +470,7 @@ def compute_top_candidates(asof_date_str: str) -> pd.DataFrame:
 # ============================================================
 # 模拟持仓 + 调仓信号
 # ============================================================
-@st.cache_data(ttl=1800, show_spinner="生成调仓信号...")
+@st.cache_data(ttl=CACHE_TTL_RECOMPUTE, show_spinner="生成调仓信号...")
 def compute_rebalance_signal(asof_date_str: str, top_candidates_df: pd.DataFrame) -> dict:
     """今日调仓信号 (单日版本, 不模拟历史)
 
@@ -683,7 +684,7 @@ def _build_daily_score_panel(panel: pd.DataFrame, asof_dates: list, bench: pd.Da
     return pd.concat(rows, ignore_index=True)
 
 
-@st.cache_data(ttl=1800, show_spinner="回测中...")
+@st.cache_data(ttl=CACHE_TTL_RECOMPUTE, show_spinner="回测中...")
 def compute_backtest_curve(
     start_date_str: str,
     end_date_str: str,

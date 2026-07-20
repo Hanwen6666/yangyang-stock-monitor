@@ -121,3 +121,15 @@ SPACING_LG = "12px"
 
 # 表格 KPI 卡
 KPI_CARD_HEIGHT = "66px"
+
+
+# ============================================================================
+# 2026-07-20 重构: Streamlit cache TTL 集中配置
+# 老大拍板跳过靶点 #2 (hardcoded 路径), 继续推进靶点 #3
+# ============================================================================
+
+# Cache TTL (秒) — 统一配置, 改一处生效全库
+CACHE_TTL_RESULT = 300        # 结果数据 (load_results, load_history)
+CACHE_TTL_ETF_LIST = 600      # ETF 列表 + K 线数据 (_cached_fetch_amount, _prepare_list_view, _build_history_html)
+CACHE_TTL_RECOMPUTE = 1800    # 重计算 (candidates, signal, backtest)
+CACHE_TTL_STATIC = 3600       # 静态数据 (_load_data)

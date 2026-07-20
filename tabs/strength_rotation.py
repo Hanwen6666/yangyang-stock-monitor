@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from lib.constants import (
     BG, BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
+    CACHE_TTL_STATIC,  # 2026-07-20 重构: TTL 统一
 )
 from lib.strategy_v3 import (
     fetch_market_klines, get_a_stock_pool, run_backtest,
@@ -31,7 +32,7 @@ from html import escape
 # ============================================================
 # 数据加载(单例 + spinner)
 # ============================================================
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_STATIC, show_spinner=False)
 def _load_data():
     """加载 K 线 + 大盘(快 30-60s,1 小时缓存)"""
     return fetch_market_klines(force=False)

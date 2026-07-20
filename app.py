@@ -23,6 +23,7 @@ from lib.constants import (  # noqa: E402
     BG, BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
     LABEL_ORDER,
+    CACHE_TTL_RESULT,  # 2026-07-20 重构: streamlit cache TTL 统一
 )
 from tabs import render_all_tabs, TABS  # noqa: E402
 from fetch_data import refresh_data, recompute_locally, DATA_DIR as FETCH_DATA_DIR  # noqa: E402
@@ -176,7 +177,7 @@ st.markdown(f"""
 # ============================================================
 DATA_DIR = Path(__file__).parent / "data"
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=CACHE_TTL_RESULT)
 def load_results() -> pd.DataFrame:
     p = DATA_DIR / "results.csv"
     if not p.exists():
@@ -188,7 +189,7 @@ def load_results() -> pd.DataFrame:
             df[col] = 0
     return df
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=CACHE_TTL_RESULT)
 def load_history() -> pd.DataFrame:
     p = DATA_DIR / "etf_trend_history.csv"
     if not p.exists():

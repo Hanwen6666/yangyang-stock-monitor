@@ -20,6 +20,7 @@ from lib.constants import (  # noqa: E402
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
     LABEL_ORDER, LABEL_STYLES, SHORT_MAP,
     CHART_KLINE_HEIGHT,
+    CACHE_TTL_ETF_LIST, CACHE_TTL_RECOMPUTE,  # 2026-07-20 重构: TTL 统一
 )
 from lib import algorithm as algo
 from lib.chart_kline import _kline_chart_html
@@ -30,7 +31,7 @@ from lib.ui_components import (
 )  # 2026-07-20 重构: 9 个列 formatter 抽离
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_RECOMPUTE, show_spinner=False)
 def _cached_fetch_kline(code: str, min_len: int):
     """缓存 K 线数据(优先腾讯快照,更稳定),避免跨 tab 切换重复拉取卡死"""
     try:
@@ -43,13 +44,13 @@ def _cached_fetch_kline(code: str, min_len: int):
     return k
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_ETF_LIST, show_spinner=False)
 def _cached_fetch_amount(code: str):
     """成交额缓存,避免每次进入个股分析重复拉取"""
     return algo.fetch_amount(code)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_ETF_LIST, show_spinner=False)
 def _prepare_list_view(df_res: pd.DataFrame, label_filter: str | None,
                         cat_filter_tuple=()):
     """缓存列表视图的筛选+排序,避免 segmented_control 切换时重复计算。
@@ -66,7 +67,7 @@ def _prepare_list_view(df_res: pd.DataFrame, label_filter: str | None,
     return df_view
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_ETF_LIST, show_spinner=False)
 def _build_history_html(df_hist: pd.DataFrame, points_tuple, df_res: pd.DataFrame,
                          selected_dates_tuple, label_filter_list):
     """缓存趋势演变 HTML,避免 radio 切换时重复构建 207×N 个色块。
