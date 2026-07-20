@@ -90,15 +90,9 @@ MIN_LISTING_DAYS = 250    # 至少 250 个交易日历史
 # ============================================================
 # HTTP — 复用 lib.algorithm 的 session
 # ============================================================
-def _tencent_market_prefix(code6: str) -> str:
-    if not code6:
-        return "sz"
-    first = code6[0]
-    # 沪市: 6xx / 9xx(沪 B) / 5xx(基金)
-    if first in "569":
-        return "sh"
-    # 深市: 0xx / 1xx(B 股) / 2xx(B 股) / 3xx(创业板)
-    return "sz"
+# 2026-07-20 重构去重: tencent_market_prefix 统一从 lib.algorithm 引用
+# 此前本文件第 93-109 行有一份重复实现, 现删除, 改用下方 import
+from lib.algorithm import tencent_market_prefix  # noqa: F401
 
 
 # C4 加固: 错误计数器 + throttled warning (避免每只股票都打一行刷屏)
@@ -130,7 +124,7 @@ def _tencent_kline_one(code6: str, n: int = 250) -> pd.DataFrame | None:
     C4 加固 (2026-07-19): 永久错误不再静默, 打 throttled warning + 累计计数,
     silent failure 变 loud failure, 便于排查.
     """
-    prefix = _tencent_market_prefix(code6)
+    prefix = tencent_market_prefix(code6)
     url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
     code_param = f"{prefix}{code6}"  # 不再重复加 prefix: 'sh' + '600519' = 'sh600519'
     try:

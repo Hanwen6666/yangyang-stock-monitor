@@ -361,11 +361,14 @@ def fetch_kline_tencent(code6):
     return _parse_tencent_klines(code_tx)
 
 
-def _tencent_market_prefix(code6: str) -> str:
+def tencent_market_prefix(code6: str) -> str:
     """按股票代码推导腾讯快照的前缀(sh/sz)
 
     沪市: 6/9 开头（A股主板、 B 股）和 5 开头 (ETF/封闭式基金)
     深市: 0/1/2/3 开头（A股主板、中小板、创业板、 B 股）和 1/5 开头部分 ETF
+
+    2026-07-20 重构去重: 此前在 lib/strategy_v3.py 有一份副本(无 docstring),
+    现统一引用此版本, 下划线公开化。
     """
     if not code6:
         return 'sz'
@@ -406,7 +409,7 @@ def fetch_amount(code6):
 
     调用方可用 _cached_fetch_amount 包一层缓存
     """
-    primary_prefix = _tencent_market_prefix(code6)
+    primary_prefix = tencent_market_prefix(code6)
     fallbacks = [primary_prefix, 'sh' if primary_prefix == 'sz' else 'sz']
 
     for prefix in fallbacks:

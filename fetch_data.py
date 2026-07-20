@@ -255,12 +255,12 @@ def _batch_fetch_latest_from_tencent(codes: list, max_workers=10):
     """
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).parent))
-    from lib.algorithm import _tencent_market_prefix, _parse_amount_from_text
+    from lib.algorithm import tencent_market_prefix, _parse_amount_from_text
     # 复用模块级 _SESSION(共享 TCP 连接),保证并发时连接池不爆
     from lib.algorithm import _SESSION as _algo_session
 
     def _fetch_one(code):
-        prefix = _tencent_market_prefix(code)
+        prefix = tencent_market_prefix(code)
         url = f"https://web.sqt.gtimg.cn/q={prefix}{code}"
         try:
             raw = _algo_session.get(url, timeout=5)
