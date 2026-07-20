@@ -1,0 +1,60 @@
+# ============================================================
+# .gitignore — 羊羊股市监测
+# 设计原则: 只提交源码 + 配置 + 文档
+#   排除: 虚拟环境、Python 缓存、备份文件、Streamlit 缓存、SSL 证书、数据资产
+# 创建: 2026-07-20 P2 节点
+# ============================================================
+
+# Python 虚拟环境 (442MB, 重新生成 < 1 min)
+venv/
+env/
+.venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Streamlit 缓存 (用户态配置)
+.streamlit/secrets.toml
+
+# SSL 证书 (12K, 但含敏感信息)
+ssl/
+
+# 数据资产 (2.1GB, 不进 git)
+data/
+# 例外: 保留 data/ 下配置文件 (但当前项目 data/ 都是 K 线/历史数据, 全排除)
+# !data/.gitkeep
+
+# 系统日志
+log/
+*.log
+
+# 历史备份文件 (覆盖事故历史遗留, 进 git 反而污染)
+*.bak
+*.bak.*
+*.py.bak*
+*.corrupt.*
+# 7-17 事故快照目录 (不进 git, 改用 git 回滚)
+.bak-20260717/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 临时文件
+*.tmp
+.tmp/
+
+# 本地环境配置 (含可能的密钥)
+.env
+.env.local
+*.local
+
+# OpenClaw workspace 状态文件 (不属于项目本身)
+openclaw-workspace-state.json

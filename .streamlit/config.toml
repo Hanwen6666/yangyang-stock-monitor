@@ -1,0 +1,39 @@
+# Streamlit 服务配置
+# 2026-07-19 修复: 加 fileWatcherType=none + 禁 hot reload 避免内存泄漏
+
+[server]
+# 允许所有 origin 访问 (IP 直连需要)
+enableCORS = false
+enableXsrfProtection = false
+# WebSocket 跨域允许
+headless = true
+port = 8501
+address = "0.0.0.0"
+# 最大上传限制
+maxUploadSize = 200
+# ⭐ 关闭 file watcher (避免 data/ 目录 mtime 变化触发 streamlit 重新跑整脚本导致内存泄漏)
+fileWatcherType = "none"
+
+[browser]
+# 不自动打开浏览器 (headless 模式下)
+gatherUsageStats = false
+
+[theme]
+# 暗色主题适配
+base = "dark"
+primaryColor = "#ff6b00"
+backgroundColor = "#0a0e1a"
+secondaryBackgroundColor = "#1a1f2e"
+textColor = "#e5e7eb"
+font = "sans serif"
+
+[runner]
+# ⭐ 关闭 fast reruns (auto_refresh.py 写 CSV 时 streamlit 不会自动 rerun)
+fastReruns = false
+# ⭐ 关闭 hot reload (改 .py 文件不自动 reload,需要手动 restart)
+# 注意: 这条选项是给开发用的,生产应该禁掉避免改代码期间 streamlit 异常
+
+[client]
+# 关闭工具栏
+toolbarMode = "minimal"
+showErrorDetails = false

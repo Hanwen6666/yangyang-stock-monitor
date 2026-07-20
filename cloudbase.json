@@ -1,0 +1,45 @@
+{
+  "version": "2.0",
+  "envId": "ENV_ID_PLACEHOLDER",
+  "framework": {
+    "name": "yangyang-stock-monitor",
+    "runtime": "container",
+    "plugins": {
+      "tcb": {
+        "runtime": "custom",
+        "provider": "cloudbase",
+        "config": {
+          "serviceName": "yangyang-stock-monitor",
+          "servicePath": "/",
+          "containerPort": 8080,
+          "dockerfile": "./Dockerfile",
+          "buildDir": ".",
+          "envId": "ENV_ID_PLACEHOLDER",
+          "env": {
+            "TZ": "Asia/Shanghai"
+          }
+        }
+      }
+    }
+  },
+  "cloudfunction": {},
+  "container": {
+    "serviceName": "yangyang-stock-monitor",
+    "servicePath": "/",
+    "port": 8080,
+    "envId": "ENV_ID_PLACEHOLDER",
+    "imageName": "yangyang-stock-monitor",
+    "imageTag": "latest",
+    "dockerfile": "./Dockerfile",
+    "buildContext": ".",
+    "env": {
+      "TZ": "Asia/Shanghai"
+    },
+    "healthCheck": {
+      "type": "http",
+      "path": "/healthz",
+      "intervalSeconds": 30,
+      "timeoutSeconds": 5
+    }
+  }
+}
