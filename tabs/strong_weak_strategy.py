@@ -38,6 +38,7 @@ from lib.constants import (  # noqa: E402
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
 )
 from lib.ui_components import kpi_card  # noqa: E402
+from lib.ui_components import td_html, th_html  # noqa: E402  # 2026-07-20 重构: 表格 cell helper
 
 
 # ============================================================
@@ -1119,29 +1120,29 @@ def _attribution_table_html(contrib_df: pd.DataFrame) -> str:
         pnl_color = ACCENT_DN if r["pnl_pct"] > 0 else ACCENT_UP
         top_rows.append(
             f'<tr style="border-bottom:1px solid {BORDER};">'
-            f'<td style="padding:5px 8px;color:{TEXT_MUTED};font-family:monospace;">{int(r["rank"])}</td>'
-            f'<td style="padding:5px 8px;color:{TEXT};font-weight:600;">{r["code"]}</td>'
-            f'<td style="padding:5px 8px;color:{TEXT};">{r["name"]}</td>'
-            f'<td style="padding:5px 8px;color:{TEXT_MUTED};font-family:monospace;">{r["entry_date"]}</td>'
-            f'<td style="padding:5px 8px;color:{contrib_color};font-family:monospace;font-weight:700;text-align:right;">{r["contribution"]*100:+.2f}%</td>'
-            f'<td style="padding:5px 8px;color:{TEXT};font-family:monospace;text-align:right;">{r["entry_price"]:.2f}</td>'
-            f'<td style="padding:5px 8px;color:{TEXT};font-family:monospace;text-align:right;">{r["current_price"]:.2f}</td>'
-            f'<td style="padding:5px 8px;color:{pnl_color};font-family:monospace;text-align:right;">{r["pnl_pct"]*100:+.1f}%</td>'
-            f'<td style="padding:5px 8px;color:{TEXT_MUTED};font-family:monospace;text-align:right;">{int(r["days_held"])}</td>'
-            f'</tr>'
+            + td_html(str(int(r["rank"])), color=TEXT_MUTED, mono=True)
+            + td_html(r["code"], color=TEXT, bold=True)
+            + td_html(r["name"], color=TEXT)
+            + td_html(r["entry_date"], color=TEXT_MUTED, mono=True)
+            + td_html(f'{r["contribution"]*100:+.2f}%', color=contrib_color, mono=True, bold=True, align="right")
+            + td_html(f'{r["entry_price"]:.2f}', color=TEXT, mono=True, align="right")
+            + td_html(f'{r["current_price"]:.2f}', color=TEXT, mono=True, align="right")
+            + td_html(f'{r["pnl_pct"]*100:+.1f}%', color=pnl_color, mono=True, align="right")
+            + td_html(str(int(r["days_held"])), color=TEXT_MUTED, mono=True, align="right")
+            + '</tr>'
         )
     top_header = (
         f'<tr style="background:{BG_PANEL_HI};">'
-        f'<th style="padding:6px 8px;text-align:left;color:{TEXT_MUTED};font-size:11px;">#</th>'
-        f'<th style="padding:6px 8px;text-align:left;color:{TEXT_MUTED};font-size:11px;">代码</th>'
-        f'<th style="padding:6px 8px;text-align:left;color:{TEXT_MUTED};font-size:11px;">名称</th>'
-        f'<th style="padding:6px 8px;text-align:left;color:{TEXT_MUTED};font-size:11px;">入场日</th>'
-        f'<th style="padding:6px 8px;text-align:right;color:{ACCENT_DN};font-size:11px;">贡献%</th>'
-        f'<th style="padding:6px 8px;text-align:right;color:{TEXT_MUTED};font-size:11px;">入场价</th>'
-        f'<th style="padding:6px 8px;text-align:right;color:{TEXT_MUTED};font-size:11px;">现价</th>'
-        f'<th style="padding:6px 8px;text-align:right;color:{TEXT_MUTED};font-size:11px;">收益%</th>'
-        f'<th style="padding:6px 8px;text-align:right;color:{TEXT_MUTED};font-size:11px;">持仓天数</th>'
-        f'</tr>'
+        + th_html('#')
+        + th_html('代码')
+        + th_html('名称')
+        + th_html('入场日')
+        + th_html('贡献%', color=ACCENT_DN, align="right")
+        + th_html('入场价', align="right")
+        + th_html('现价', align="right")
+        + th_html('收益%', align="right")
+        + th_html('持仓天数', align="right")
+        + '</tr>'
     )
     top_html = (
         f'<div style="background:{BG_PANEL};border:1px solid {BORDER};border-radius:8px;overflow:hidden;">'
@@ -1161,16 +1162,16 @@ def _attribution_table_html(contrib_df: pd.DataFrame) -> str:
         pnl_color = ACCENT_DN if r["pnl_pct"] > 0 else ACCENT_UP
         bottom_rows.append(
             f'<tr style="border-bottom:1px solid {BORDER};">'
-            f'<td style="padding:5px 8px;color:{TEXT_MUTED};font-family:monospace;">{int(r["rank"])}</td>'
-            f'<td style="padding:5px 8px;color:{TEXT};font-weight:600;">{r["code"]}</td>'
-            f'<td style="padding:5px 8px;color:{TEXT};">{r["name"]}</td>'
-            f'<td style="padding:5px 8px;color:{TEXT_MUTED};font-family:monospace;">{r["entry_date"]}</td>'
-            f'<td style="padding:5px 8px;color:{contrib_color};font-family:monospace;font-weight:700;text-align:right;">{r["contribution"]*100:+.2f}%</td>'
-            f'<td style="padding:5px 8px;color:{TEXT};font-family:monospace;text-align:right;">{r["entry_price"]:.2f}</td>'
-            f'<td style="padding:5px 8px;color:{TEXT};font-family:monospace;text-align:right;">{r["current_price"]:.2f}</td>'
-            f'<td style="padding:5px 8px;color:{pnl_color};font-family:monospace;text-align:right;">{r["pnl_pct"]*100:+.1f}%</td>'
-            f'<td style="padding:5px 8px;color:{TEXT_MUTED};font-family:monospace;text-align:right;">{int(r["days_held"])}</td>'
-            f'</tr>'
+            + td_html(str(int(r["rank"])), color=TEXT_MUTED, mono=True)
+            + td_html(r["code"], color=TEXT, bold=True)
+            + td_html(r["name"], color=TEXT)
+            + td_html(r["entry_date"], color=TEXT_MUTED, mono=True)
+            + td_html(f'{r["contribution"]*100:+.2f}%', color=contrib_color, mono=True, bold=True, align="right")
+            + td_html(f'{r["entry_price"]:.2f}', color=TEXT, mono=True, align="right")
+            + td_html(f'{r["current_price"]:.2f}', color=TEXT, mono=True, align="right")
+            + td_html(f'{r["pnl_pct"]*100:+.1f}%', color=pnl_color, mono=True, align="right")
+            + td_html(str(int(r["days_held"])), color=TEXT_MUTED, mono=True, align="right")
+            + '</tr>'
         )
     bottom_header = top_header.replace(f'color:{ACCENT_DN}', f'color:{ACCENT_UP}').replace('贡献%', '拖累%')
     bottom_html = (
@@ -1453,21 +1454,21 @@ def _rebalance_signal_html(signal: dict) -> str:
         for _, r in entries.head(15).iterrows():
             rows_e.append(
                 f'<tr style="border-bottom:1px solid {BORDER};">'
-                f'<td style="padding:5px 8px;color:{ACCENT_UP};font-weight:600;">↗ {r["code"]}</td>'
-                f'<td style="padding:5px 8px;color:{TEXT};">{r["name"]}</td>'
-                f'<td style="padding:5px 8px;color:{TEXT};font-family:monospace;text-align:right;">{r["close"]:.2f}</td>'
-                f'<td style="padding:5px 8px;color:{TEXT};font-family:monospace;text-align:right;">{r["score"]:.1f}</td>'
-                f'<td style="padding:5px 8px;color:{ACCENT_UP};font-family:monospace;text-align:right;">{r["alpha_20"]:+.1f}%</td>'
-                f'</tr>'
+                + td_html(f'↗ {r["code"]}', color=ACCENT_UP, bold=True)
+                + td_html(r["name"], color=TEXT)
+                + td_html(f'{r["close"]:.2f}', color=TEXT, mono=True, align="right")
+                + td_html(f'{r["score"]:.1f}', color=TEXT, mono=True, align="right")
+                + td_html(f'{r["alpha_20"]:+.1f}%', color=ACCENT_UP, mono=True, align="right")
+                + '</tr>'
             )
         header_e = (
             f'<tr style="background:{BG_PANEL_HI};">'
-            f'<th style="padding:6px 8px;text-align:left;color:{ACCENT_UP};font-size:11px;">代码</th>'
-            f'<th style="padding:6px 8px;text-align:left;color:{TEXT_MUTED};font-size:11px;">名称</th>'
-            f'<th style="padding:6px 8px;text-align:right;color:{TEXT_MUTED};font-size:11px;">现价</th>'
-            f'<th style="padding:6px 8px;text-align:right;color:{TEXT_MUTED};font-size:11px;">分数</th>'
-            f'<th style="padding:6px 8px;text-align:right;color:{TEXT_MUTED};font-size:11px;">20日α</th>'
-            f'</tr>'
+            + th_html('代码', color=ACCENT_UP)
+            + th_html('名称')
+            + th_html('现价', align="right")
+            + th_html('分数', align="right")
+            + th_html('20日α', align="right")
+            + '</tr>'
         )
         e_html = (
             f'<div style="background:{BG_PANEL};border:1px solid {BORDER};border-radius:8px;overflow:hidden;">'
@@ -1484,19 +1485,19 @@ def _rebalance_signal_html(signal: dict) -> str:
         for _, r in exits.iterrows():
             rows_x.append(
                 f'<tr style="border-bottom:1px solid {BORDER};">'
-                f'<td style="padding:5px 8px;color:{ACCENT_DN};font-weight:600;">↘ {r["code"]}</td>'
-                f'<td style="padding:5px 8px;color:{TEXT};">{r["name"]}</td>'
-                f'<td style="padding:5px 8px;color:{TEXT_DIM};font-size:11px;">{r["reason"]}</td>'
-                f'<td style="padding:5px 8px;color:{TEXT};font-family:monospace;text-align:right;">{r["score"]:.1f}</td>'
-                f'</tr>'
+                + td_html(f'↘ {r["code"]}', color=ACCENT_DN, bold=True)
+                + td_html(r["name"], color=TEXT)
+                + td_html(r["reason"], color=TEXT_DIM)
+                + td_html(f'{r["score"]:.1f}', color=TEXT, mono=True, align="right")
+                + '</tr>'
             )
         header_x = (
             f'<tr style="background:{BG_PANEL_HI};">'
-            f'<th style="padding:6px 8px;text-align:left;color:{ACCENT_DN};font-size:11px;">代码</th>'
-            f'<th style="padding:6px 8px;text-align:left;color:{TEXT_MUTED};font-size:11px;">名称</th>'
-            f'<th style="padding:6px 8px;text-align:left;color:{TEXT_MUTED};font-size:11px;">原因</th>'
-            f'<th style="padding:6px 8px;text-align:right;color:{TEXT_MUTED};font-size:11px;">分数</th>'
-            f'</tr>'
+            + th_html('代码', color=ACCENT_DN)
+            + th_html('名称')
+            + th_html('原因')
+            + th_html('分数', align="right")
+            + '</tr>'
         )
         x_html = (
             f'<div style="background:{BG_PANEL};border:1px solid {BORDER};border-radius:8px;overflow:hidden;">'

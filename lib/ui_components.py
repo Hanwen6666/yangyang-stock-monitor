@@ -113,3 +113,78 @@ def metric_row_html(metrics_list) -> str:
 
 # 暴露给旧调用方的别名(向后兼容)
 _metric_row_html = metric_row_html
+
+
+# ============================================================
+# 2026-07-20 重构增量: 安全 HTML utility (统一 escape 入口)
+# 背景: 全栈多出 st.markdown(unsafe_allow_html=True) 调用, escape() 调用不一致,
+#       XSS 风险统一在 safe_html() 入口处理
+# ============================================================
+
+def safe_html(tag: str, content: str = "", **attrs: str) -> str:
+    """统一安全 HTML 生成器: 自动 escape 所有属性值和内容
+
+    用法:
+        safe_html("td", "510300", color=TEXT, style="padding:5px 8px;")
+        safe_html("span", label_badge_html(value))
+
+    Args:
+        tag: HTML 标签名 (如 "td" / "span" / "div")
+        content: 标签内部文本 (会自动 escape)
+        **attrs: HTML 属性 (会自动 escape 属性值)
+                常用: style, class_, id, color
+
+    Returns:
+        完整 HTML 字符串
+
+    Note:
+        - class 是 Python 保留字, 使用 class_ 代替
+        - style 字符串默认 escape; 如果 style 必须是 CSS 颜色 {TEXT_MUTED} 之类
+          Python f-string 插值的常量, 在调用方拼接后传入 (不需 escape)
+    """
+    attrs_html = ""
+    for k, v in attrs.items():
+        if v is None:
+            continue
+        # class → class_ (Python 保留字)
+        attr_name = "class" if k == "class_" else k.replace("_", "-")
+        attrs_html += f' {attr_name}="{escape(str(v))}"'
+    return f'<{tag}{attrs_html}>{escape(str(content))}</{tag}>'
+
+
+def td_html(content: str, color: str = TEXT, *, mono: bool = False,
+            bold: bool = False, align: str = "left") -> str:
+    """统一表格数据单元格 — 替代 <td style="padding:5px 8px;color:X;font-family:monospace;text-align:right;">...
+
+    Args:
+        content: 单元格文本 (自动 escape)
+        color: 文本颜色 (来自 lib.constants, 例如 TEXT / TEXT_MUTED / ACCENT_UP)
+        mono: True → font-family:monospace (用于数字/代码)
+        bold: True → font-weight:700
+        align: "left" / "center" / "right"
+
+    Returns:
+        <td> 完整 HTML (已 escape content)
+    """
+    style_parts = [f"padding:5px 8px", f"color:{color}", f"text-align:{align}"]
+    if mono:
+        style_parts.append("font-family:monospace")
+    if bold:
+        style_parts.append("font-weight:700")
+    style = ";".join(style_parts) + ";"
+    return safe_html("td", content, style=style)
+
+
+def th_html(content: str, color: str = TEXT_MUTED, align: str = "left") -> str:
+    """统一表格表头单元格 — 替代 <th style="padding:6px 8px;text-align:left;color:X;font-size:11px;">...
+
+    Args:
+        content: 表头文本 (自动 escape)
+        color: 文本颜色 (默认 TEXT_MUTED)
+        align: "left" / "center" / "right"
+
+    Returns:
+        <th> 完整 HTML (已 escape content)
+    """
+    style = f"padding:6px 8px;text-align:{align};color:{color};font-size:11px;"
+    return safe_html("th", content, style=style)
