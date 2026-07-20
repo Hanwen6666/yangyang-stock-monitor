@@ -947,8 +947,21 @@ def compute_backtest_curve(
     }
 
 
+def _chart_axis(i: int, n: int, pad_l: int, plot_w: int) -> float:
+    """2026-07-21 P1: X 轴坐标 (从 _backtest_chart_html 抽出的 to_x helper)"""
+    return pad_l + (i / max(n - 1, 1)) * plot_w
+
+
+def _chart_value(v: float, y_min: float, y_range: float, pad_t: int, plot_h: int) -> float:
+    """2026-07-21 P1: Y 轴坐标 (从 _backtest_chart_html 抽出的 to_y helper)"""
+    return pad_t + (1 - (v - y_min) / y_range) * plot_h
+
+
 def _backtest_chart_html(bt: dict, width: int = 1100, height: int = 360) -> str:
-    """净值曲线 HTML (策略 vs 创业板指) — 纯 inline SVG"""
+    """净值曲线 HTML (策略 vs 创业板指) — 纯 inline SVG
+
+    2026-07-21 P1 重构: 抽出 _chart_axis + _chart_value 几何 helper 到模块层
+    """
     if "error" in bt:
         return f'<div style="color:{TEXT_MUTED};padding:14px;background:{BG_PANEL};' \
                f'border:1px solid {BORDER};border-radius:8px;">回测错误: {bt["error"]}</div>'
@@ -975,23 +988,20 @@ def _backtest_chart_html(bt: dict, width: int = 1100, height: int = 360) -> str:
     y_range = y_max - y_min
 
     n = len(dates)
-    def to_x(i):
-        return pad_l + (i / max(n - 1, 1)) * plot_w
-    def to_y(v):
-        return pad_t + (1 - (v - y_min) / y_range) * plot_h
+    # 2026-07-21 P1: 用模块层 helper _chart_axis + _chart_value 替换内嵌 to_x/to_y
 
     # 策略路径 (绿, ACCENT_DN = 涨色)
-    path_s = " ".join([f"{to_x(i):.1f},{to_y(v):.1f}" for i, v in enumerate(nav_s)])
+    path_s = " ".join([f"{_chart_axis(i, n, pad_l, plot_w):.1f},{_chart_value(v, y_min, y_range, pad_t, plot_h):.1f}" for i, v in enumerate(nav_s)])
     # benchmark 路径 (中色)
-    path_b = " ".join([f"{to_x(i):.1f},{to_y(v):.1f}" for i, v in enumerate(nav_b)])
+    path_b = " ".join([f"{_chart_axis(i, n, pad_l, plot_w):.1f},{_chart_value(v, y_min, y_range, pad_t, plot_h):.1f}" for i, v in enumerate(nav_b)])
 
     # Y 轴刻度 (5 个)
     y_ticks = [y_min + (y_range * i / 4) for i in range(5)]
     y_tick_labels = [f"{v:.2f}" for v in y_ticks]
     y_tick_lines = "".join([
-        f'<line x1="{pad_l}" y1="{to_y(v):.1f}" x2="{pad_l + plot_w}" y2="{to_y(v):.1f}" '
+        f'<line x1="{pad_l}" y1="{_chart_value(v, y_min, y_range, pad_t, plot_h):.1f}" x2="{pad_l + plot_w}" y2="{_chart_value(v, y_min, y_range, pad_t, plot_h):.1f}" '
         f'stroke="{BORDER}" stroke-width="0.5" stroke-dasharray="2,2"/>'
-        f'<text x="{pad_l - 6}" y="{to_y(v):.1f}" text-anchor="end" '
+        f'<text x="{pad_l - 6}" y="{_chart_value(v, y_min, y_range, pad_t, plot_h):.1f}" text-anchor="end" '
         f'fill="{TEXT_DIM}" font-size="10" font-family="monospace" dominant-baseline="middle">{lbl}</text>'
         for v, lbl in zip(y_ticks, y_tick_labels)
     ])
@@ -999,7 +1009,7 @@ def _backtest_chart_html(bt: dict, width: int = 1100, height: int = 360) -> str:
     # X 轴刻度 (起、中、末)
     x_tick_idx = [0, n // 2, n - 1]
     x_tick_lines = "".join([
-        f'<text x="{to_x(i):.1f}" y="{pad_t + plot_h + 18}" text-anchor="middle" '
+        f'<text x="{_chart_axis(i, n, pad_l, plot_w):.1f}" y="{pad_t + plot_h + 18}" text-anchor="middle" '
         f'fill="{TEXT_DIM}" font-size="10" font-family="monospace">{dates[i]}</text>'
         for i in x_tick_idx
     ])
@@ -1008,7 +1018,7 @@ def _backtest_chart_html(bt: dict, width: int = 1100, height: int = 360) -> str:
     init_line = ""
     if y_min < 1.0 < y_max:
         init_line = (
-            f'<line x1="{pad_l}" y1="{to_y(1.0):.1f}" x2="{pad_l + plot_w}" y2="{to_y(1.0):.1f}" '
+            f'<line x1="{pad_l}" y1="{_chart_value(1.0, y_min, y_range, pad_t, plot_h):.1f}" x2="{pad_l + plot_w}" y2="{_chart_value(1.0, y_min, y_range, pad_t, plot_h):.1f}" '
             f'stroke="{TEXT_MUTED}" stroke-width="0.5" stroke-dasharray="4,3"/>'
         )
 
@@ -1238,7 +1248,7 @@ def _yearly_bar_chart_html(yearly: dict, years_sorted: list) -> str:
     y_min = -max_abs * 0.3 if any(v < 0 for v in all_vals) else 0
     y_range = y_max - y_min if y_max > y_min else 0.01
 
-    def to_y(v):
+    def _chart_value(v, y_min, y_range, pad_t, plot_h):
         return pad_t + (1 - (v - y_min) / y_range) * plot_h
     zero_y = to_y(0)
 
@@ -1286,7 +1296,7 @@ def _yearly_bar_chart_html(yearly: dict, years_sorted: list) -> str:
     for v in [y_min, 0, y_max]:
         if y_min <= v <= y_max:
             y_labels.append(
-                f'<text x="{pad_l - 6}" y="{to_y(v):.1f}" text-anchor="end" '
+                f'<text x="{pad_l - 6}" y="{_chart_value(v, y_min, y_range, pad_t, plot_h):.1f}" text-anchor="end" '
                 f'fill="{TEXT_DIM}" font-size="10" font-family="monospace" dominant-baseline="middle">{v*100:+.0f}%</text>'
             )
 
