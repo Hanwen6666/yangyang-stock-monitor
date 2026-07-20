@@ -29,6 +29,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import streamlit as st
+import os
 
 # 复用项目内 lib
 _THIS = Path(__file__).resolve()
@@ -45,8 +46,9 @@ from lib.ui_components import td_html, th_html  # noqa: E402  # 2026-07-20 重�
 # ============================================================
 # 配置 / 常量
 # ============================================================
-STOCK_CACHE_DIR = Path("/home/ubuntu/.openclaw/workspace/stock_cache")
-DATA_CACHE_DIR = Path("/home/ubuntu/.openclaw/workspace/data_cache")
+# 2026-07-21 阶段 2 靶点 P1: hardcoded 路径加环境变量覆盖
+STOCK_CACHE_DIR = Path(os.environ.get("YY_STOCK_CACHE_DIR", "/home/ubuntu/.openclaw/workspace/stock_cache"))
+DATA_CACHE_DIR = Path(os.environ.get("YY_DATA_CACHE_DIR", "/home/ubuntu/.openclaw/workspace/data_cache"))
 BENCHMARK_CODE = "399006"  # 创业板指
 BENCHMARK_NAME = "创业板指"
 # benchmark 优先从 data_cache 取 (列全 + 日期长 2010 至今)

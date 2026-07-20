@@ -43,7 +43,12 @@ import requests
 # 路径常量
 # ============================================================
 # 项目内的 stock_kline 数据源(全 A 2019 至今)
-EXTERNAL_DATA_DIR = Path("/home/ubuntu/.openclaw/workspace/scripts/market_strength/data")
+import os
+
+# 2026-07-21 阶段 2 靶点 P1: hardcoded 路径加 YY_EXTERNAL_DATA_DIR 环境变量覆盖
+# 默认保留现状, 老大可 set YY_EXTERNAL_DATA_DIR=/data 跨部署
+_DEFAULT_EXTERNAL = "/home/ubuntu/.openclaw/workspace/scripts/market_strength/data"
+EXTERNAL_DATA_DIR = Path(os.environ.get("YY_EXTERNAL_DATA_DIR", _DEFAULT_EXTERNAL))
 STOCK_KLINE_DIR = EXTERNAL_DATA_DIR / "stock_kline"
 INDEX_399006_PATH = EXTERNAL_DATA_DIR / "index_399006.json"
 ALL_STOCKS_PATH = EXTERNAL_DATA_DIR / "all_stocks_v2.json"
