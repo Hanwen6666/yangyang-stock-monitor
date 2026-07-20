@@ -863,51 +863,19 @@ def compute_backtest_curve(
         dates.append(d)
 
     # 5. 指标
-    nav_s = pd.Series(nav_strategy)
-    nav_b = pd.Series(nav_benchmark)
-    n_days = len(nav_s)
-    total_ret_s = float(nav_s.iloc[-1] - 1)
-    total_ret_b = float(nav_b.iloc[-1] - 1)
-    years = max(n_days / 244.0, 0.01)
-    ann_ret_s = (1 + total_ret_s) ** (1 / years) - 1 if total_ret_s > -1 else -1.0
-    ann_ret_b = (1 + total_ret_b) ** (1 / years) - 1 if total_ret_b > -1 else -1.0
-    cummax_s = nav_s.cummax()
-    mdd_s = float(((nav_s - cummax_s) / cummax_s).min())
-    cummax_b = nav_b.cummax()
-    mdd_b = float(((nav_b - cummax_b) / cummax_b).min())
-    daily_s = nav_s.pct_change().fillna(0)
-    daily_b = nav_b.pct_change().fillna(0)
-    sharpe_s = float(daily_s.mean() / daily_s.std() * (244 ** 0.5)) if daily_s.std() > 0 else 0.0
-    win_rate = float((daily_s > daily_b).mean())
+    metrics = _compute_backtest_metrics(nav_strategy, nav_benchmark)
+    n_days = metrics["n_days"]
+    total_ret_s = metrics["total_return"]
+    ann_ret_s = metrics["annual_return"]
+    mdd_s = metrics["max_drawdown"]
+    sharpe_s = metrics["sharpe"]
+    win_rate = metrics["win_rate"]
+    total_ret_b = metrics["bm_total"]
+    ann_ret_b = metrics["bm_annual"]
+    mdd_b = metrics["bm_mdd"]
 
     # 6. 归因: 转为 DataFrame 排序
-    contrib_rows = []
-    for code, c in contribution.items():
-        # 计算期初价格 (用 entry_date 当天 or 之前)
-        df = pool.get(code)
-        if df is None:
-            continue
-        ep = c.get("entry_date")
-        e_df = df[df["date"] >= ep] if ep is not None else df
-        if e_df.empty:
-            continue
-        ep_price = float(e_df["close"].iloc[0])
-        cp_price = c["current_price"]
-        pnl = (cp_price / ep_price - 1) if ep_price > 0 else 0.0
-        contrib_rows.append({
-            "code": code,
-            "name": c["name"],
-            "contribution": c["total"],
-            "days_held": c["days"],
-            "entry_date": str(ep)[:10] if ep is not None else "",
-            "entry_price": round(ep_price, 2),
-            "current_price": round(cp_price, 2),
-            "pnl_pct": pnl,
-        })
-    contrib_df = pd.DataFrame(contrib_rows)
-    if not contrib_df.empty:
-        contrib_df = contrib_df.sort_values("contribution", ascending=False).reset_index(drop=True)
-        contrib_df["rank"] = contrib_df.index + 1
+    contrib_df = _compute_attribution_dataframe(contribution, pool)
 
     # 7. 分年度拆分
     yearly = {}
@@ -1771,3 +1739,74 @@ def render(df_res, df_hist):
 - **当前大盘状态**: {regime} (建议仓位 {pos_ratio*100:.0f}%)
             """
         )
+
+
+def _compute_backtest_metrics(nav_strategy, nav_benchmark):
+    """2026-07-20 阶段 2 靶点 2-C: 抽自 compute_backtest_curve L865-881
+
+    计算回测曲线指标 (累计/年化/最大回撤/夏普/胜率)
+    """
+    # 5. 指标
+    nav_s = pd.Series(nav_strategy)
+    nav_b = pd.Series(nav_benchmark)
+    n_days = len(nav_s)
+    total_ret_s = float(nav_s.iloc[-1] - 1)
+    total_ret_b = float(nav_b.iloc[-1] - 1)
+    years = max(n_days / 244.0, 0.01)
+    ann_ret_s = (1 + total_ret_s) ** (1 / years) - 1 if total_ret_s > -1 else -1.0
+    ann_ret_b = (1 + total_ret_b) ** (1 / years) - 1 if total_ret_b > -1 else -1.0
+    cummax_s = nav_s.cummax()
+    mdd_s = float(((nav_s - cummax_s) / cummax_s).min())
+    cummax_b = nav_b.cummax()
+    mdd_b = float(((nav_b - cummax_b) / cummax_b).min())
+    daily_s = nav_s.pct_change().fillna(0)
+    daily_b = nav_b.pct_change().fillna(0)
+    sharpe_s = float(daily_s.mean() / daily_s.std() * (244 ** 0.5)) if daily_s.std() > 0 else 0.0
+    win_rate = float((daily_s > daily_b).mean())
+    return {
+        "n_days": n_days,
+        "total_return": total_ret_s,
+        "annual_return": ann_ret_s,
+        "max_drawdown": mdd_s,
+        "sharpe": sharpe_s,
+        "win_rate": win_rate,
+        "bm_total": total_ret_b,
+        "bm_annual": ann_ret_b,
+        "bm_mdd": mdd_b,
+    }
+
+
+def _compute_attribution_dataframe(contribution, pool):
+    """2026-07-20 阶段 2 靶点 2-C: 抽自 compute_backtest_curve L883-910
+
+    把 contribution dict 转为归因 DataFrame (按贡献排序 + 加 rank)
+    """
+    # 6. 归因: 转为 DataFrame 排序
+    contrib_rows = []
+    for code, c in contribution.items():
+        # 计算期初价格 (用 entry_date 当天 or 之前)
+        df = pool.get(code)
+        if df is None:
+            continue
+        ep = c.get("entry_date")
+        e_df = df[df["date"] >= ep] if ep is not None else df
+        if e_df.empty:
+            continue
+        ep_price = float(e_df["close"].iloc[0])
+        cp_price = c["current_price"]
+        pnl = (cp_price / ep_price - 1) if ep_price > 0 else 0.0
+        contrib_rows.append({
+            "code": code,
+            "name": c["name"],
+            "contribution": c["total"],
+            "days_held": c["days"],
+            "entry_date": str(ep)[:10] if ep is not None else "",
+            "entry_price": round(ep_price, 2),
+            "current_price": round(cp_price, 2),
+            "pnl_pct": pnl,
+        })
+    contrib_df = pd.DataFrame(contrib_rows)
+    if not contrib_df.empty:
+        contrib_df = contrib_df.sort_values("contribution", ascending=False).reset_index(drop=True)
+        contrib_df["rank"] = contrib_df.index + 1
+    return contrib_df
