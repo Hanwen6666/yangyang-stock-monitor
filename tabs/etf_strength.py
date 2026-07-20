@@ -438,12 +438,12 @@ def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
         f'拼装 {render_ms}ms</span></span>'
         f'<span style="font-size:11px;letter-spacing:0.3px;display:flex;align-items:center;gap:6px;">'
         f'<span style="color:{TEXT_DIM};font-size:10px;text-transform:uppercase;">图例</span>'
-        f'<span style="background:#ff1a3d;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;">超强势</span> '
-        f'<span style="background:#ff6b00;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;">强势</span> '
-        f'<span style="background:#ffc107;color:#0a0e1a;padding:1px 6px;border-radius:3px;font-size:10px;">震荡上涨</span> '
-        f'<span style="background:#2a334a;color:#c5c8d6;padding:1px 6px;border-radius:3px;font-size:10px;">横盘震荡</span> '
-        f'<span style="background:#3a7bd5;color:#fff;padding:1px 6px;border-radius:3px;font-size:10px;">震荡下跌</span> '
-        f'<span style="background:#1c2538;color:#9aaac0;padding:1px 6px;border-radius:3px;font-size:10px;">一直下跌</span>'
+        f'{label_badge_html("超强势")} '
+        f'{label_badge_html("强势")} '
+        f'{label_badge_html("震荡上涨")} '
+        f'{label_badge_html("横盘震荡")} '
+        f'{label_badge_html("震荡下跌")} '
+        f'{label_badge_html("一直下跌")}'
         f'</span>'
         f'</div>',
         unsafe_allow_html=True,
