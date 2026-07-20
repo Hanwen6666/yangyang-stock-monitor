@@ -564,7 +564,7 @@ def run_backtest(
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> BacktestResult:
-    """单次回测主循环
+    """单次回测主循环 (2026-07-20 阶段 2 拆为 5 个子函数 + 调度器)
 
     Args:
         klines: 全市场 K 线字典(>200 天的)
@@ -574,51 +574,39 @@ def run_backtest(
         start_date: 起始交易日(默认从 benchmark 上市 200 天后开始)
         end_date: 截止交易日(默认最新)
     """
+    # === 0) 准备阶段 ===
     if benchmark is None or len(benchmark) < 250:
         raise ValueError("大盘数据不足")
 
     bench_dates = benchmark["date"].astype(str).values
     bench_closes = benchmark["close"].astype(float).values
+    # 市场状态机 → 字符串序列 (POSITION_TABLE.get 需要 hashable 字符串 key)
+    market_state_seq = [ms.state for ms in calc_market_state(benchmark)]
 
-    # 计算大盘状态
-    market_states = calc_market_state(benchmark)
-    state_by_date = {ms.state_since: ms for ms in market_states}
-    # 实际按数组索引取
-    market_state_seq = [ms.state for ms in market_states]
-
-    # 找开始/结束
-    start_idx = 250
-    if start_date:
-        for i, d in enumerate(bench_dates):
-            if d >= start_date:
-                start_idx = max(i, 250)
-                break
-    end_idx = len(bench_dates) - 1
-    if end_date:
-        for i, d in enumerate(bench_dates):
-            if d > end_date:
-                end_idx = i - 1
-                break
-        end_idx = max(end_idx, start_idx)
-
+    if start_date is None:
+        start_idx = 250  # 上市 200 天后开始, 留 50 天缓冲
+    else:
+        start_idx = int(np.searchsorted(bench_dates, start_date))
+    if end_date is None:
+        end_idx = len(bench_dates) - 1
+    else:
+        end_idx = int(np.searchsorted(bench_dates, end_date, side="right") - 1)
     total_days = end_idx - start_idx + 1
-    if total_days < 30:
+    if total_days <= 0:
         raise ValueError(f"回测区间太短: {total_days} 天")
 
-    # 每日数据准备
-    # 把每只股票的 (date -> close) 索引化,加速
-    stock_closes_by_date: dict[str, dict[str, float]] = {}
-    stock_close_arrays: dict[str, np.ndarray] = {}
-    stock_date_arrays: dict[str, np.ndarray] = {}
-    stock_high_by_date: dict[str, dict[str, float]] = {}
+    # 索引化所有股票 K 线
     valid_codes = []
+    stock_closes_by_date = {}
+    stock_date_arrays = {}
+    stock_close_arrays = {}
+    stock_high_by_date = {}
     for code, kl in klines.items():
         if kl is None or len(kl) < 200:
             continue
         d = kl["date"].astype(str).values
         c = kl["close"].astype(float).values
         h = kl["high"].astype(float).values
-        # 索引: date -> position
         idx = {d_i: i for i, d_i in enumerate(d)}
         stock_closes_by_date[code] = idx
         stock_date_arrays[code] = d
@@ -630,42 +618,26 @@ def run_backtest(
         raise ValueError("无有效股票 K 线")
 
     # 模拟状态
-    portfolio_cash = 1.0  # 归一化净值
-    positions: dict[str, Position] = {}  # code -> Position
+    portfolio_cash = 1.0
+    positions: dict[str, Position] = {}
     equity_records = []
     trade_records = []
-    holdings_log = []  # 每日持仓快照
+    holdings_log = []
 
+    # === 主循环调度器 ===
     for day_i in range(start_idx, end_idx + 1):
         cur_date = bench_dates[day_i]
-        # 大盘数据切片
         bench_so_far = bench_closes[: day_i + 1]
         market_state = market_state_seq[day_i] if day_i < len(market_state_seq) else "横盘"
         position_pct = POSITION_TABLE.get(market_state, 0.6)
 
-        # === 1) 每日: 计算所有股票 α + 截面 rank + 入场判断 ===
-        rows = []
-        for code in valid_codes:
-            dates = stock_date_arrays[code]
-            idx_map = stock_closes_by_date[code]
-            pos = idx_map.get(cur_date)
-            if pos is None or pos < 200:
-                continue
-            closes = stock_close_arrays[code][: pos + 1]
-            a5, a10, a20 = calc_score(closes, bench_so_far)
-            ma200 = _ma_value(closes, MA_FILTER)
-            cur_close = float(closes[-1])
-            early_bot = _is_early_bottom(closes)
-            rows.append({
-                "code": code,
-                "alpha_5": a5,
-                "alpha_10": a10,
-                "alpha_20": a20,
-                "close": cur_close,
-                "ma200": ma200,
-                "early_bottom": early_bot,
-            })
-        if not rows:
+        # 1) 选候选 (α 计算 + 截面 rank)
+        df_scored, has_rows = _step_select_candidates(
+            cur_date, market_state, valid_codes,
+            stock_closes_by_date, stock_date_arrays, stock_close_arrays, bench_so_far,
+        )
+
+        if not has_rows:
             equity_records.append({
                 "date": cur_date, "equity": portfolio_cash, "n_holdings": 0,
                 "position_pct": position_pct, "market_state": market_state,
@@ -674,126 +646,225 @@ def run_backtest(
             holdings_log.append({"date": cur_date, "holdings": ""})
             continue
 
-        df_today = pd.DataFrame(rows)
-        df_scored = cross_section_score(df_today, is_bottom_phase=(market_state == "阶段底"))
+        # 2) 检查退出 (止损 / 跑输)
+        to_sell, stop_loss_triggered_today = _step_check_exit(
+            positions, cur_date,
+            stock_close_arrays, stock_closes_by_date, stock_high_by_date, bench_so_far,
+        )
 
-        # === 2) 检查退出条件 (止损 / 跑输) ===
-        to_sell = []
-        for code, pos in positions.items():
-            if code not in stock_close_arrays:
-                continue
-            idx_map = stock_closes_by_date[code]
-            idx = idx_map.get(cur_date)
-            if idx is None:
-                continue
-            cur_close = float(stock_close_arrays[code][idx])
-            cur_high = stock_high_by_date[code].get(cur_date, cur_close)
-            if cur_high > pos.highest_price:
-                pos.highest_price = cur_high
+        # 3) 执行卖出
+        _step_execute_sell(to_sell, positions, name_map, cur_date, trade_records)
 
-            # 止损: 最高点回撤 10%
-            if cur_close < pos.highest_price * (1 - STOP_LOSS_DRAWDOWN):
-                to_sell.append((code, cur_close, "止损-10%回撤"))
-                continue
+        # 4) 入场
+        _step_execute_buy(
+            df_scored, positions, stop_loss_triggered_today,
+            name_map, cur_date, trade_records,
+        )
 
-            # 跑输 α 累计 10 天
-            cur_alpha = _daily_alpha(
-                stock_close_arrays[code][: idx + 1],
-                bench_so_far,
-                LOSER_DAYS,
-            )
-            if cur_alpha < 0:
-                pos.consecutive_loser_days += 1
-            else:
-                pos.consecutive_loser_days = 0
-            if pos.consecutive_loser_days >= LOSER_DAYS:
-                to_sell.append((code, cur_close, f"连续{loser_days_str(LOSER_DAYS)}跑输α"))
-                continue
-
-        # 标记当日止损触发 — 当日不补位(防反复交易)
-        stop_loss_triggered_today = any(reason.startswith("止损") for _, _, reason in to_sell)
-
-        # === 3) 执行卖出 ===
-        # 注: 净值跟踪改为"日终重估"模式(在后面的 5) 中统一计算),这里
-        # 只更新 positions 和 trade_records,不再调 cash。
-        for code, price, reason in to_sell:
-            pos = positions.pop(code, None)
-            if pos is None:
-                continue
-            sell_price = price * (1 - SLIPPAGE - STAMP_TAX_SELL - COMMISSION)
-            pnl_ratio = (sell_price - pos.entry_price) / pos.entry_price
-            trade_records.append({
-                "date": cur_date, "code": code, "name": name_map.get(code, code),
-                "action": "SELL", "price": round(price, 3), "reason": reason,
-                "pnl_pct": round(pnl_ratio * 100, 2),
-            })
-
-        # === 4) 入场: 从候选池补到 30 只 ===
-        if not stop_loss_triggered_today:
-            cur_holdings = set(positions.keys())
-            n_need = POOL_TOP_N - len(cur_holdings)
-            if n_need > 0 and not df_scored.empty:
-                candidates = (
-                    df_scored[df_scored["candidate"] & ~df_scored["code"].isin(cur_holdings)]
-                    .sort_values("score", ascending=False)
-                )
-                for _, row in candidates.head(n_need).iterrows():
-                    code = row["code"]
-                    if code in positions:
-                        continue
-                    price = float(row["close"])
-                    # 买入成本: 滑点 + 佣金
-                    buy_price = price * (1 + SLIPPAGE + COMMISSION)
-                    positions[code] = Position(
-                        code=code, name=name_map.get(code, code),
-                        entry_date=cur_date, entry_price=buy_price,
-                        highest_price=buy_price,
-                    )
-                    trade_records.append({
-                        "date": cur_date, "code": code, "name": name_map.get(code, code),
-                        "action": "BUY", "price": round(price, 3),
-                        "reason": f"score={row['score']:.1f}",
-                        "pnl_pct": 0.0,
-                    })
-
-        # === 5) 净值: 等权 * 仓位比例 ===
-        # 用日线收益的几何乘 (避免浮点爆炸)
-        import bisect
-        if positions:
-            day_rets = []
-            for code in list(positions.keys()):
-                dates_arr = stock_date_arrays[code]
-                cur_idx = bisect.bisect_left(dates_arr, cur_date)
-                if cur_idx >= len(dates_arr) or dates_arr[cur_idx] != cur_date:
-                    continue
-                p = cur_idx - 1
-                if p < 0:
-                    continue
-                cur_close = float(stock_close_arrays[code][cur_idx])
-                p_close = float(stock_close_arrays[code][p])
-                if p_close <= 0:
-                    continue
-                day_rets.append(cur_close / p_close - 1)
-            if day_rets:
-                # 零股填补到 30 只 (空仓位个股记为 0 收益)
-                avg_ret = sum(day_rets) / POOL_TOP_N
-                portfolio_cash *= (1 + avg_ret * position_pct)
-        equity_records.append({
-            "date": cur_date, "equity": portfolio_cash, "n_holdings": len(positions),
-            "position_pct": position_pct, "market_state": market_state,
-        })
-
-        # 持仓快照(取持仓代码列表)
-        holdings_log.append({
-            "date": cur_date,
-            "holdings": ",".join(sorted(positions.keys())),
-            "n_holdings": len(positions),
-        })
+        # 5) 净值更新
+        portfolio_cash = _step_update_equity(
+            positions, cur_date, stock_date_arrays, stock_close_arrays, market_state,
+            portfolio_cash, position_pct, equity_records, holdings_log,
+        )
 
         if progress_cb and (day_i - start_idx) % 50 == 0:
             progress_cb(day_i - start_idx, total_days, f"回测 {cur_date}", None, "backtest")
 
     # === 6) 统计 ===
+    return _step_finalize_stats(equity_records, trade_records, holdings_log, benchmark)
+
+
+# ============================================================================
+# 2026-07-20 阶段 2 拆 run_backtest: 5 个 _step_xxx 子函数
+# 原则: 子函数不持有外部状态, 通过参数 + 返回值传递
+# ============================================================================
+
+def _step_select_candidates(
+    cur_date, market_state, valid_codes,
+    stock_closes_by_date, stock_date_arrays, stock_close_arrays, bench_so_far,
+):
+    """1) 计算所有股票 α + 截面 rank + 入场判断
+
+    Returns:
+        (df_scored, has_rows): df_scored 为截面评分 DataFrame, has_rows 标识是否有候选
+    """
+    rows = []
+    for code in valid_codes:
+        dates = stock_date_arrays[code]
+        idx_map = stock_closes_by_date[code]
+        pos = idx_map.get(cur_date)
+        if pos is None or pos < 200:
+            continue
+        closes = stock_close_arrays[code][: pos + 1]
+        a5, a10, a20 = calc_score(closes, bench_so_far)
+        ma200 = _ma_value(closes, MA_FILTER)
+        cur_close = float(closes[-1])
+        early_bot = _is_early_bottom(closes)
+        rows.append({
+            "code": code,
+            "alpha_5": a5,
+            "alpha_10": a10,
+            "alpha_20": a20,
+            "close": cur_close,
+            "ma200": ma200,
+            "early_bottom": early_bot,
+        })
+
+    if not rows:
+        return pd.DataFrame(), False
+
+    df_today = pd.DataFrame(rows)
+    df_scored = cross_section_score(df_today, is_bottom_phase=(market_state == "阶段底"))
+    return df_scored, True
+
+
+def _step_check_exit(
+    positions, cur_date,
+    stock_close_arrays, stock_closes_by_date, stock_high_by_date, bench_so_far,
+):
+    """2) 检查退出条件 (止损 / 跑输)
+
+    标记当日止损触发 — 当日不补位(防反复交易)
+
+    Returns:
+        (to_sell, stop_loss_triggered_today)
+    """
+    to_sell = []
+    for code, pos in positions.items():
+        if code not in stock_close_arrays:
+            continue
+        idx_map = stock_closes_by_date[code]
+        idx = idx_map.get(cur_date)
+        if idx is None:
+            continue
+        cur_close = float(stock_close_arrays[code][idx])
+        cur_high = stock_high_by_date[code].get(cur_date, cur_close)
+        if cur_high > pos.highest_price:
+            pos.highest_price = cur_high
+
+        # 止损: 最高点回撤 10%
+        if cur_close < pos.highest_price * (1 - STOP_LOSS_DRAWDOWN):
+            to_sell.append((code, cur_close, "止损-10%回撤"))
+            continue
+
+        # 跑输 α 累计 10 天
+        cur_alpha = _daily_alpha(
+            stock_close_arrays[code][: idx + 1],
+            bench_so_far,
+            LOSER_DAYS,
+        )
+        if cur_alpha < 0:
+            pos.consecutive_loser_days += 1
+        else:
+            pos.consecutive_loser_days = 0
+        if pos.consecutive_loser_days >= LOSER_DAYS:
+            to_sell.append((code, cur_close, f"连续{loser_days_str(LOSER_DAYS)}跑输α"))
+            continue
+
+    stop_loss_triggered_today = any(reason.startswith("止损") for _, _, reason in to_sell)
+    return to_sell, stop_loss_triggered_today
+
+
+def _step_execute_sell(to_sell, positions, name_map, cur_date, trade_records):
+    """3) 执行卖出
+
+    注: 净值跟踪改为"日终重估"模式(在 5) 中统一计算), 这里
+    只更新 positions 和 trade_records, 不再调 cash。
+    """
+    for code, price, reason in to_sell:
+        pos = positions.pop(code, None)
+        if pos is None:
+            continue
+        sell_price = price * (1 - SLIPPAGE - STAMP_TAX_SELL - COMMISSION)
+        pnl_ratio = (sell_price - pos.entry_price) / pos.entry_price
+        trade_records.append({
+            "date": cur_date, "code": code, "name": name_map.get(code, code),
+            "action": "SELL", "price": round(price, 3), "reason": reason,
+            "pnl_pct": round(pnl_ratio * 100, 2),
+        })
+
+
+def _step_execute_buy(df_scored, positions, stop_loss_triggered_today, name_map, cur_date, trade_records):
+    """4) 入场: 从候选池补到 30 只
+    """
+    if stop_loss_triggered_today:
+        return
+    cur_holdings = set(positions.keys())
+    n_need = POOL_TOP_N - len(cur_holdings)
+    if n_need <= 0 or df_scored.empty:
+        return
+    candidates = (
+        df_scored[df_scored["candidate"] & ~df_scored["code"].isin(cur_holdings)]
+        .sort_values("score", ascending=False)
+    )
+    for _, row in candidates.head(n_need).iterrows():
+        code = row["code"]
+        if code in positions:
+            continue
+        price = float(row["close"])
+        # 买入成本: 滑点 + 佣金
+        buy_price = price * (1 + SLIPPAGE + COMMISSION)
+        positions[code] = Position(
+            code=code, name=name_map.get(code, code),
+            entry_date=cur_date, entry_price=buy_price,
+            highest_price=buy_price,
+        )
+        trade_records.append({
+            "date": cur_date, "code": code, "name": name_map.get(code, code),
+            "action": "BUY", "price": round(price, 3),
+            "reason": f"score={row['score']:.1f}",
+            "pnl_pct": 0.0,
+        })
+
+
+def _step_update_equity(
+    positions, cur_date, stock_date_arrays, stock_close_arrays, market_state,
+    portfolio_cash, position_pct, equity_records, holdings_log,
+):
+    """5) 净值: 等权 * 仓位比例
+
+    用日线收益的几何乘 (避免浮点爆炸)
+
+    Returns:
+        portfolio_cash: 更新后的净值
+    """
+    import bisect
+    if positions:
+        day_rets = []
+        for code in list(positions.keys()):
+            dates_arr = stock_date_arrays[code]
+            cur_idx = bisect.bisect_left(dates_arr, cur_date)
+            if cur_idx >= len(dates_arr) or dates_arr[cur_idx] != cur_date:
+                continue
+            p = cur_idx - 1
+            if p < 0:
+                continue
+            cur_close = float(stock_close_arrays[code][cur_idx])
+            p_close = float(stock_close_arrays[code][p])
+            if p_close <= 0:
+                continue
+            day_rets.append(cur_close / p_close - 1)
+        if day_rets:
+            # 零股填补到 30 只 (空仓位个股记为 0 收益)
+            avg_ret = sum(day_rets) / POOL_TOP_N
+            portfolio_cash *= (1 + avg_ret * position_pct)
+    equity_records.append({
+        "date": cur_date, "equity": portfolio_cash, "n_holdings": len(positions),
+        "position_pct": position_pct, "market_state": market_state,
+    })
+
+    holdings_log.append({
+        "date": cur_date,
+        "holdings": ",".join(sorted(positions.keys())),
+        "n_holdings": len(positions),
+    })
+
+    return portfolio_cash
+
+
+def _step_finalize_stats(equity_records, trade_records, holdings_log, benchmark):
+    """6) 统计: 回撤 + 跑赢基准 + 最终 stats dict + BacktestResult
+    """
     eq_df = pd.DataFrame(equity_records)
     eq_df["date"] = pd.to_datetime(eq_df["date"])
     eq_df = eq_df.sort_values("date").reset_index(drop=True)
@@ -838,8 +909,6 @@ def run_backtest(
         holdings_log=pd.DataFrame(holdings_log),
         final_stats=stats,
     )
-
-
 def loser_days_str(n: int) -> str:
     return f"{n}日"
 
