@@ -111,53 +111,44 @@ def _parse_tencent_klines(code_tx):
 
 
 def _parse_akshare(code_sina):
-    """akshare 多接口试:新浪→东财(被限速时的fallback),返回 DataFrame 或 None"""
+    """akshare 多接口试:新浪→东财(被限速时的fallback),返回 DataFrame 或 None
+
+    2026-07-21 E 靶点: 与 lib/algorithm.py 旧实现 100% 一致
+    (akshare.fund_etf_hist_sina → akshare.fund_etf_hist_em)
+    """
     code6 = code_sina[-6:] if len(code_sina) >= 6 else code_sina
     try:
-        ak = akshare
-        # 优先 ak.stock_zh_a_hist 走新浪底层
-        df = ak.stock_zh_a_hist(
-            symbol=code6, period='daily',
-            start_date='20200101', end_date='20300101',
-            adjust='qfq'
-        )
-        if df is not None and len(df) >= 100:
-            df = df.rename(columns={
-                '日期': 'date', '开盘': 'open', '收盘': 'close',
-                '最高': 'high', '最低': 'low', '成交量': 'volume',
-            })
-            df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-            return df[['date', 'open', 'close', 'high', 'low', 'volume']].dropna(subset=['close']).reset_index(drop=True)
+        # 1) 先试新浪
+        k = akshare.fund_etf_hist_sina(symbol=code6)
+        if k is not None and len(k) > 100:
+            rename = {"日期": "date", "开盘": "open", "收盘": "close",
+                      "最高": "high", "最低": "low", "成交量": "volume"}
+            return k.rename(columns=rename)
     except Exception:
-        # akshare 失败时尝试东方财富直接接口
-        try:
-            secid = ('1.' if code6.startswith('5') or code6.startswith('1') or code6.startswith('2') or code6.startswith('6') or code6.startswith('9') else '0.') + code6
-            url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58&klt=101&fqt=1&beg=20240101&end=20300101"
-            r = _SESSION.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code == 200:
-                import json
-                k_data = json.loads(r.text).get('data', {}).get('klines', [])
-                if k_data and len(k_data) >= 50:
-                    rows = []
-                    for line in k_data:
-                        parts = line.split(',')
-                        if len(parts) >= 6:
-                            rows.append({
-                                'date': parts[0],
-                                'open': float(parts[1]), 'close': float(parts[2]),
-                                'high': float(parts[3]), 'low': float(parts[4]),
-                                'volume': float(parts[5]),
-                            })
-                    return pd.DataFrame(rows)
-        except Exception:
-            pass
+        pass
+    try:
+        # 2) 新浪失败,试东方财富(含成交额)
+        k = akshare.fund_etf_hist_em(symbol=code6, period="daily",
+                                 start_date="20190101", end_date="20300101",
+                                 adjust="qfq")
+        if k is not None and len(k) > 100:
+            rename = {"日期": "date", "开盘": "open", "收盘": "close",
+                      "最高": "high", "最低": "low", "成交量": "volume",
+                      "成交额": "amount"}
+            df = k.rename(columns=rename)
+            for c in ['open','close','high','low','volume','amount']:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors='coerce')
+            return df[['date','open','close','high','low','volume','amount']]
+    except Exception:
+        pass
     return None
 
 
 def _cross_validate(df_list):
     """多源交叉验证:取 max(len) 且 max(last_date) 的源优先
 
-    Returns: DataFrame or None
+    2026-07-21 E 靶点: 与 lib/algorithm.py 旧实现行为一致
     """
     valid = [df for df in df_list if df is not None and not df.empty]
     if not valid:
