@@ -15,10 +15,8 @@ ETF 市场数据获取层 (2026-07-21 E 靶点: 从 lib/algorithm.py 抽出)
   - 数据落地 (fetch_data.py::refresh_data + recompute_locally 负责)
 
 跨文件 import 路径约定:
-  旧: from lib.algorithm import tencent_market_prefix
-  新: from lib.market_data import tencent_market_prefix
-
-⚠️ 兼容性: 同时 re-export 旧 lib.algorithm 路径 (deprecation 期)
+  单点真理: from lib.market_data import tencent_market_prefix
+  (原 from lib.algorithm import 已废弃, E5 后 lib.algorithm.py 删 re-export 块)
 """
 import io
 import re
@@ -306,23 +304,3 @@ def fetch_amount(code6):
         except Exception:
             continue
     return None
-
-
-# ============================================================
-# 兼容性 re-export (deprecation 期)
-# 让外部 from lib.algorithm import tencent_market_prefix 仍能工作
-# ============================================================
-import sys as _sys
-import types as _types
-_legacy_module = _types.ModuleType("lib._legacy_market_data_reexports")
-_legacy_module._SESSION = _SESSION
-_legacy_module._http_get = _http_get
-_legacy_module.tencent_market_prefix = tencent_market_prefix
-_legacy_module._parse_tencent_klines = _parse_tencent_klines
-_legacy_module._parse_akshare = _parse_akshare
-_legacy_module._cross_validate = _cross_validate
-_legacy_module.fetch_kline = fetch_kline
-_legacy_module.fetch_kline_tencent = fetch_kline_tencent
-_legacy_module._parse_amount_from_text = _parse_amount_from_text
-_legacy_module.fetch_amount = fetch_amount
-_sys.modules.setdefault("lib._legacy_market_data_reexports", _legacy_module)
