@@ -884,6 +884,8 @@ def compute_backtest_curve(
     if dates and len(dates) > 1:
         dates_arr = pd.to_datetime(dates)
         years_list = sorted(set(dates_arr.year.tolist()))
+        nav_s = pd.Series(nav_strategy)
+        nav_b = pd.Series(nav_benchmark)
         for y in years_list:
             mask = dates_arr.year == y
             if mask.sum() < 5:
