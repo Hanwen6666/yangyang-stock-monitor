@@ -310,3 +310,84 @@ def pd_isna(v) -> bool:
     return False
 
 
+
+
+# ============================================================
+# 2026-07-21 δ 靶点: 高 ROI 通用组件 (unsafe_allow_html 切组件化)
+# 目标: 替换散落各 tabs/*.py 的 26 处 inline_text + 19 处 panel/badge 模式
+# 设计原则: 小巧 / 可复用 / escape 用户输入
+# ============================================================
+
+def height_spacer(height_px: int = 12) -> str:
+    """δ-1: 高度分隔条 (替代 '<div style="height:12px"></div>' 模式)"""
+    return f'<div style="height:{height_px}px"></div>'
+
+
+def inline_note_html(text: str, color: str = TEXT_DIM, font_size: int = 13) -> str:
+    """δ-2: 内联提示文字 (替代 '输入 X 后点击 Y' 灰色提示行, 约 26 处 inline_text)"""
+    return (
+        f'<div style="color:{escape(color)};font-size:{font_size}px;'
+        f'text-align:center;padding:30px 0 8px;">{escape(text)}</div>'
+    )
+
+
+def dashed_placeholder_html(text: str, color: str = TEXT_DIM) -> str:
+    """δ-3: 虚线占位提示框 (替代 '暂无可分析个股' 提示, 约 5 处)"""
+    return (
+        f'<div style="color:{escape(color)};font-size:13px;text-align:center;'
+        f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
+        f'{escape(text)}</div>'
+    )
+
+
+def colored_tag_html(text: str, bg: str = BG_PANEL, color: str = TEXT,
+                     padding: str = "1px 6px", font_size: int = 10,
+                     radius: int = 4, font_weight: int = 600,
+                     margin_left: int = 4) -> str:
+    """δ-4: 彩色小标签 (替代 label_tag_html / industry_tag_html 模式, 约 10 处)"""
+    return (
+        f'<span style="background:{bg};color:{color};'
+        f'padding:{padding};border-radius:{radius}px;'
+        f'font-size:{font_size}px;font-weight:{font_weight};'
+        f'margin-left:{margin_left}px;">{escape(text)}</span>'
+    )
+
+
+def bordered_info_box_html(title: str, body: str, border_color: str,
+                            bg_color: str = "#1a1f2e", padding: int = 20) -> str:
+    """δ-5: 带边框的提示框 (替代 '暂无数据' 黄色提示, 约 3 处)"""
+    return (
+        f'<div style="background:{bg_color};border:1px solid {border_color};'
+        f'border-radius:8px;padding:{padding}px;text-align:center;margin:24px 0;">'
+        f'<div style="color:{border_color};font-size:18px;font-weight:600;'
+        f'margin-bottom:8px;">{escape(title)}</div>'
+        f'<div style="color:{TEXT_DIM};font-size:13px;">{escape(body)}</div>'
+        f'</div>'
+    )
+
+
+def kpi_band_item_html(label: str, value: str, color: str = TEXT,
+                       value_size: int = 13, font_weight: int = 600) -> str:
+    """δ-6: KPI 带单个 item (替代 '排序首位' / 计数标签 类小卡, 约 6 处)"""
+    return (
+        f'<div style="display:flex;align-items:center;gap:6px;height:40px;'
+        f'padding:0 10px;background:{BG_PANEL};border:1px solid {BORDER};'
+        f'border-radius:6px;">'
+        f'<span style="color:{TEXT_DIM};font-size:10px;font-weight:500;'
+        f'text-transform:uppercase;letter-spacing:0.5px;">{escape(label)}</span>'
+        f'<span style="color:{escape(color)};font-size:{value_size}px;'
+        f'font-weight:{font_weight};font-family:monospace;line-height:1;">'
+        f'{escape(value)}</span>'
+        f'</div>'
+    )
+
+
+# delta 靶点组件清单 (总计 6 个, 预计覆盖 50+ 处 unsafe_allow_html)
+# - height_spacer: 1 处 spacer + 部分 height:Npx
+# - inline_note_html: 26 处 inline_text 提示
+# - dashed_placeholder_html: 5 处虚线占位
+# - colored_tag_html: 10 处彩色 label_tag
+# - bordered_info_box_html: 3 处黄色提示框
+# - kpi_band_item_html: 6 处 KPI 带 item
+# 剩余 30+ 处 unsafe_allow_html 是 mixed_html (每处 unique),
+# 组件化得不偿失, 留待后续 sprint
