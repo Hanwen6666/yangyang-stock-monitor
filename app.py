@@ -28,7 +28,7 @@ from lib.constants import (  # noqa: E402
     CACHE_TTL_RESULT,  # 2026-07-20 重构: streamlit cache TTL 统一
 )
 from tabs import render_all_tabs, TABS  # noqa: E402
-from fetch_data import refresh_data, recompute_locally, DATA_DIR as FETCH_DATA_DIR  # noqa: E402
+from fetch_data import refresh_data, recompute_locally, _check_cloudbase_health, DATA_DIR as FETCH_DATA_DIR  # noqa: E402
 
 # ============================================================
 # 页面配置
@@ -357,6 +357,47 @@ def _load_data_with_seed_fallback():
     return df_res, df_hist, df_res.empty
 
 
+def _render_cloudbase_status_banner():
+    """2026-07-21 A2: 在 main() 顶部渲染 CloudBase API 状态 banner
+
+    背景: 深度检查发现 CloudBase 服务不可达 (10s 超时, 0 bytes)
+          导致 streamlit 数据卡在上一交易日, 用户无感知。
+    逻辑:
+      - 先读 .asof 知道当前数据停留在哪一天
+      - 调用 _check_cloudbase_health(3s) 速断 health
+      - 仅在 health=ok=False 时渲染红色 banner (不干扰正常用户)
+      - banner 包含: 状态 / last_success时间 / 预警文本
+    Returns:
+        bool - cloudbase_ok (供后续判断是否进入 fetch 路径)
+    """
+    from lib.ui_components import bordered_info_box_html
+    asof_path = FETCH_DATA_DIR / ".asof"
+    last_data_date = asof_path.read_text(encoding="utf-8").strip() if asof_path.exists() else "未知"
+    health = _check_cloudbase_health(timeout=3)
+    # 缓存到 session_state,避免多次主页访问重复调
+    st.session_state.cloudbase_health = health
+    if health["ok"]:
+        return True
+    # CloudBase 不可达 → banner
+    last_success_path = Path("/home/ubuntu/.openclaw/workspace/scripts/market_strength/data/.last_success")
+    last_success_str = "未知"
+    if last_success_path.exists():
+        try:
+            import json as _json
+            d = _json.loads(last_success_path.read_text(encoding="utf-8"))
+            last_success_str = d.get("ts", "未知")
+        except Exception:
+            pass
+    html = bordered_info_box_html(
+        "⚠️ CloudBase API 不可达",
+        f"数据停留在 {last_data_date} · 上次成功 {last_success_str} · 错误: {health['error']}",
+        border_color="#f59e0b",
+        bg_color="#1a1f2e",
+    )
+    st.markdown(html, unsafe_allow_html=True)
+    return False
+
+
 def _render_empty_state_banner(df_res: pd.DataFrame, is_empty: bool):
     """2026-07-21 η 靶点: 渲染 seed/empty 状态横幅提示
 
@@ -500,6 +541,7 @@ def main():
     """
     _init_session_state()
     df_res, df_hist, is_empty = _load_data_with_seed_fallback()
+    _render_cloudbase_status_banner()
     _render_empty_state_banner(df_res, is_empty)
     render_header(df_res if not is_empty else pd.DataFrame(), st.session_state.refresh_state)
     df_res, df_hist = _handle_refresh_button(df_res, df_hist)
