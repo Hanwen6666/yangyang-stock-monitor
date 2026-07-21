@@ -228,13 +228,37 @@ def fetch_kline_tencent(code6):
 def _parse_amount_from_text(text: str):
     """腾讯快照 v_sh600519="1~贵州..." 解析成交额
 
-    返回字段顺序 (价格/昨收/成交额),仅取第 3 个数
-    ⚠️ 2026-07-21 E 靶点: 完全保留原始实现 (含历史 regex bug,
-    报告给老大拍板是否修复)
+    腾讯快照实际格式: v_sh600519="1~名字~code~今开~昨收~成交额~..."
+    split 后索引:
+      [0] v_sh600519="1
+      [1] 名字
+      [2] code
+      [3] 今开
+      [4] 昨收
+      [5] 成交额 (元)  ← 我们要这个
+      [6]+ 后续字段
+
+    2026-07-21 修复: 原 lib/algorithm.py 实现用 `/` 分隔正则,
+    但腾讯快照实际用 `~`,导致永远返回 None,fetch_amount() 永远拿不到数据。
+    修复:优先 parts[5],不合法时退化到旧 `/` 分隔正则(兼容历史数据)。
+
+    返回成交额 (元),为 0 时返回 None (停牌/未开盘)。
     """
-    import re as _re
     if not text or '~' not in text:
         return None
+    parts = text.split('~')
+    if len(parts) >= 6:
+        try:
+            amount = float(parts[5])
+            if amount > 0:
+                return amount
+            # 成交额 = 0 是停牌/未开盘,返回 None
+            return None
+        except (ValueError, IndexError):
+            # parts[5] 不是数字,尝试退化路径
+            pass
+    # 退化: 保留旧 `/` 分隔匹配 (兼容历史数据)
+    import re as _re
     m = _re.search(r'~([\d.]+)/([\d.]+)/([\d.]+)~', text)
     if not m:
         return None
@@ -242,7 +266,6 @@ def _parse_amount_from_text(text: str):
         amount = float(m.group(3))
     except (ValueError, IndexError):
         return None
-    # 腾讯有时返回 0（停牌/未开盘）
     return amount if amount > 0 else None
 
 
