@@ -1,7 +1,12 @@
 """
 K线图组件 — TradingView lightweight-charts via CDN
 
-返回完整 HTML 字符串,调用方用 st.components.v1.html 嵌入。
+返回完整 HTML 字符串,调用方用 st.html(unsafe_allow_javascript=True) 嵌入。
+
+【2026-07-22 P0 修复 v2】streamlit 1.40+ 实际行为:
+- st.components.v1.html(html, h=620) → iframe height=0 (deprecation 已生效)
+- st.iframe(html, h=620) → 拒绝裸 HTML 字符串(只接 URL/Path)
+- st.html(html, unsafe_allow_javascript=True) → 接 HTML 字符串 + 允许 JS ✅
 
 依赖: pandas + 不需要任何额外包(CDN 加载 lightweight-charts@4.2.1)
 

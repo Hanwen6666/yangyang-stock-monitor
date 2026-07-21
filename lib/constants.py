@@ -82,7 +82,7 @@ def classify_name(name: str) -> str:
 # ============================================================
 
 # K线图
-CHART_KLINE_HEIGHT = 620        # st.components.v1.html 高度
+CHART_KLINE_HEIGHT = 620        # st.iframe 高度 (2026-07-22 从 st.components.v1.html 迁移)
 CHART_KLINE_INNER_HEIGHT = 500  # lightweight-charts canvas 高度
 KLINE_BAR_SPACING = 10          # 柱间距(像素)
 KLINE_VISIBLE_BARS = 60         # 默认聚焦最近 N 根

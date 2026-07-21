@@ -1077,12 +1077,47 @@ def _prepare_stock_kline(code: str, etf_name: str) -> dict | None:
 
 
 def _render_stock_kline_chart(code: str, kw_show_chart: pd.DataFrame) -> None:
-    """2026-07-21 α 靶点: 渲染 K 线图 (主图+成交量副图, CDN lightweight-charts)"""
+    """2026-07-21 α 靶点: 渲染 K 线图 (主图+成交量副图, CDN lightweight-charts)
+
+    2026-07-22 P0 修复三次试错:
+      - v1: st.components.v1.html(html, h=620) → streamlit 1.40+ iframe h=0 (deprecation)
+      - v2: st.iframe(html, h=620) → 拒绝裸 HTML 字符串(只接 URL/Path)
+      - v3: st.html(html, unsafe_allow_javascript=True) → DOMPurify 删除 <script> 块
+      - v4 (本次): 回退到 st.components.v1.html + st.markdown CSS override
+                    强制 iframe 高度为 CHART_KLINE_HEIGHT
+    方案理由:
+      - st.components.v1.html 1.40+ deprecation 但仍可用(仅 warning)
+      - 副作用是 iframe 被 streamlit 设了 h=0 (CSS hack)
+      - streamlit 1.40+ 对 components.v1.html 有特殊处理:
+        iframe 的 height 是通过 LayoutConfig 传递,但 stHtml 1.40+
+        CSS 选择器不准(static v1 组件需要额外 !important CSS)
+      - 修复方法: render 前 inject 一段 markdown CSS 强制
+        `iframe[title*="streamlit.components"]` 高于 CHART_KLINE_HEIGHT
+      - streamlit 1.40+ 仍把 components.v1.html 转发到 st.iframe,
+        但 iframe title 是 'st.iframe' (不是 'streamlit.components'),
+        所以改为选择所有 K线图父级的 [data-testid="stElementContainer"]
+        然后给 iframe 加 style。
+    """
     chart_html = _kline_chart_html(
         kw_show_chart,
         amount_series=kw_show_chart["amount"] if "amount" in kw_show_chart.columns else None,
     )
+    # 1. 渲染 K 线图 — components.v1.html streamlit 1.40+ 仍支持
     st.components.v1.html(chart_html, height=CHART_KLINE_HEIGHT)
+    # 2. CSS 强制 streamlit 给 iframe 设的 h=0 被覆盖
+    st.markdown(
+        f'''<style>
+/* streamlit 1.40+ 把 st.components.v1.html 转发为 st.iframe, iframe 被设了 h=0 */
+/* 强制把该区域所有 iframe 都设上正确高度 */
+[data-testid="stElementContainer"] iframe[title*="iframe"],
+[data-testid="stElementContainer"] iframe[title*="streamlit"] {{
+  height: {CHART_KLINE_HEIGHT}px !important;
+  width: 100% !important;
+  min-height: {CHART_KLINE_HEIGHT}px !important;
+}}
+</style>''',
+        unsafe_allow_html=True,
+    )
 
 
 def _enrich_chart_with_latest_amount(code: str, kw_show_chart: pd.DataFrame) -> pd.DataFrame:
