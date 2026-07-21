@@ -423,17 +423,228 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
 
 
 
-def recompute_locally(codes=None, progress_cb=None):
-    """用 v27 算法本地重算 — 算当前分类 + 生成 25 天趋势历史
+def _load_codes_and_pool_meta(codes):
+    """2026-07-21 γ' 靶点: 加载 codes + name_map (从 etf_pool.csv 或外部传入)
 
-    流程:
-      1. 从池文件读 codes (或直接传入)
-      2. 预拉每只 K 线 275 天 (250+25),存为 cache
-      3. 对每只 ETF:
-         - 计算当前分类(最后 250 天)
-         - 回看 25 天,每天往前移 1 个交易日重新分
-         - 累计 25 个标签
-      4. 写 results.csv + etf_trend_history.csv + .asof
+    Returns:
+        (codes, name_map) — codes 是 list[str],name_map 是 dict[code, name]
+    """
+    import pandas as pd
+    if codes is None:
+        pool_path = DATA_DIR / "etf_pool.csv"
+        if pool_path.exists():
+            pool = pd.read_csv(pool_path, dtype={"代码": str})
+            codes = pool["代码"].tolist()
+        else:
+            codes = []
+    name_map, _, _ = _load_pool_meta()
+    return codes, name_map
+
+
+def _fetch_klines_with_cache(codes, total, progress_cb):
+    """2026-07-21 γ' 靶点: 带 pickle 缓存的 K 线拉取 (复用昨日 + 并行补拉今日缺失)
+
+    Returns:
+        kline_cache: dict[code, DataFrame]
+    """
+    import pickle
+    from datetime import date as _date_cls
+    from lib.safe_io import exclusive_lock, atomic_write_pickle
+
+    cache_dir = DATA_DIR / ".kline_cache"
+    cache_dir.mkdir(exist_ok=True)
+    cache_key = _date_cls.today().strftime("%Y%m%d")
+    cache_path = cache_dir / f"klines_{cache_key}.pkl"
+    lock_path = cache_dir / f"klines_{cache_key}.lock"
+    kline_cache = {}
+
+    try:
+        with exclusive_lock(lock_path, timeout=10):
+            if cache_path.exists():
+                try:
+                    with cache_path.open("rb") as f:
+                        kline_cache = pickle.load(f)
+                    print(f"[K线缓存] 命中 {cache_key},复用 {len(kline_cache)} 只")
+                except Exception as e:
+                    print(f"[K线缓存] 读取失败,重新拉: {e}")
+                    kline_cache = {}
+
+            # 哪些没缓存到 · 还要现拉
+            to_fetch = [c for c in codes if c not in kline_cache or kline_cache[c] is None]
+            if to_fetch:
+                print(f"[K线] 需重拉 {len(to_fetch)} 只")
+
+            # 并行拉 K 线(IO 密集,多线程加速)
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                fut_map = {pool.submit(algo.fetch_kline, code, 250): code for code in to_fetch}
+                for i, fut in enumerate(as_completed(fut_map)):
+                    code = fut_map[fut]
+                    try:
+                        kw = fut.result()
+                    except Exception:
+                        kw = None
+                    if kw is not None and len(kw) >= 100:
+                        kw = kw.dropna(subset=["close"]).reset_index(drop=True)
+                        if len(kw) < 250:
+                            pad_needed = 250 - len(kw)
+                            first_row = kw.iloc[:1].copy()
+                            pads = pd.concat([first_row] * pad_needed, ignore_index=True)
+                            kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
+                        kline_cache[code] = kw
+                    if progress_cb:
+                        progress_cb(i + 1, total, code, None, "kline")
+
+            print(f"K 线缓存: {len(kline_cache)}/{total} 只")
+            # 拉到一部分就立刻原子写回 pickle(锁内),下一个进程能立刻用上
+            try:
+                atomic_write_pickle(cache_path, kline_cache)
+            except Exception as e:
+                print(f"[K线缓存] 中间落盘失败(下次重拉): {e}")
+    except TimeoutError:
+        print("[K线缓存] 锁等待超时,跳过本轮,沿用空缓存继续")
+        kline_cache = {}
+    return kline_cache
+
+
+def _pick_hist_dates(kline_cache):
+    """2026-07-21 γ' 靶点: 从最完整的 K 线选最后 25 天作为历史点列名
+
+    Returns:
+        list[str] — 25 个 YYYYMMDD 日期字符串
+    """
+    if not kline_cache:
+        return [f"d_{i}" for i in range(25)]
+    pivot_code = max(kline_cache.keys(),
+                     key=lambda c: len(kline_cache[c]) if kline_cache.get(c) is not None else 0)
+    first_k = kline_cache.get(pivot_code)
+    if first_k is None or "date" not in first_k.columns:
+        return [f"d_{i}" for i in range(25)]
+    dates = pd.to_datetime(first_k["date"]).dt.strftime("%Y%m%d").tolist()
+    return dates[-(25):] if len(dates) >= 25 else dates
+
+
+def _build_metric_row_no_kline(code, name_map):
+    """2026-07-21 γ' 靶点: K 线缺失时填 N/A 指标行 (保证 207 只不丢)"""
+    return {
+        "code": code, "category": name_map.get(code, code),
+        "strength_label": "N/A", "fund_size_yi": 0,
+        "slope_20": 0, "slope_50": 0, "slope_120": 0,
+        "sharpe_composite": 0, "adx": 0, "up_ratio_60": 0,
+        "n_changes": 0, "n_points": 25,
+        "change_pct": 0,
+    }
+
+
+def _build_metric_row(code, kw, m):
+    """2026-07-21 γ' 靶点: 单只 ETF 的指标行 (从 K 线 + 算法结果构建)
+
+    Returns:
+        dict — 单只 ETF 的 results.csv 行
+    """
+    close = kw["close"].astype(float).values
+    latest_close = close[-1] if len(close) > 0 else 0.0
+    latest_volume = kw["volume"].astype(float).values[-1] if "volume" in kw.columns and len(kw) > 0 else 0.0
+    if len(close) >= 2 and close[-2] > 0:
+        change_pct = float((close[-1] - close[-2]) / close[-2] * 100)
+    else:
+        change_pct = 0.0
+    latest_amount = algo.fetch_amount(code)
+    return {"code": code, **m,
+            "latest_close": float(latest_close),
+            "latest_volume": float(latest_volume),
+            "latest_amount": float(latest_amount) if latest_amount else 0.0,
+            "change_pct": change_pct}
+
+
+def _compute_metrics_and_history(codes, kline_cache, name_map, hist_dates, progress_cb):
+    """2026-07-21 γ' 靶点: 计算所有指标 + 25 天历史 (核心算法部分)
+
+    Returns:
+        (metrics_rows, hist_rows) — 都是 list[dict]
+    """
+    metrics_rows = []
+    hist_rows = []
+    done = 0
+    for code in codes:
+        kw = kline_cache.get(code)
+        if kw is None:
+            metrics_rows.append(_build_metric_row_no_kline(code, name_map))
+            hist = {"code": code, "name": name_map.get(code, code)}
+            for t, _d in enumerate(hist_dates):
+                hist[f"d_{_d}"] = "未知"
+            hist_rows.append(hist)
+            if progress_cb:
+                progress_cb(done + 1, len(codes), code, None, "no kline")
+            done += 1
+            continue
+
+        m = algo.calc_single_etf(kw)
+        if m is None:
+            if progress_cb:
+                progress_cb(done + 1, len(codes), code, None, "calc fail")
+            done += 1
+            continue
+
+        # 指标行
+        metrics_rows.append(_build_metric_row(code, kw, m))
+
+        # 25 天滑动标签
+        close = kw["close"].astype(float).values
+        high = kw["high"].astype(float).values if "high" in kw.columns else close
+        low = kw["low"].astype(float).values if "low" in kw.columns else close
+        labels_25 = algo._compute_sliding_labels(close, high, low, n_windows=25)
+
+        hist = {"code": code, "name": name_map.get(code, code)}
+        for t, lbl in enumerate(labels_25):
+            hist[f"d_{hist_dates[t]}"] = lbl if len(hist_dates) > t else lbl
+        hist_rows.append(hist)
+
+        done += 1
+        if progress_cb:
+            progress_cb(done, len(codes), code, m, "ok")
+    return metrics_rows, hist_rows
+
+
+def _pick_asof_from_cache(kline_cache):
+    """2026-07-21 γ' 靶点: 从 K 线最后日期取 asof (而非执行时刻)"""
+    asof = datetime.now().strftime("%Y%m%d")
+    if not kline_cache:
+        return asof
+    _first_k = list(kline_cache.values())[0]
+    _last_date = _first_k["date"].iloc[-1]
+    _ds = str(_last_date).replace("-", "").replace("/", "")[:8]
+    if _ds.isdigit():
+        asof = _ds
+    return asof
+
+
+def _persist_results_and_history(metrics_df, hist_rows, hist_dates, asof, cache_key=None):
+    """2026-07-21 γ' 靶点: 落盘 results.csv + etf_trend_history.csv + .asof
+
+    Returns:
+        (n_rows, ok) — n_rows 是 results.csv 行数
+    """
+    rows, cols = _build_results_csv_from_metrics(metrics_df, asof)
+    write_csv(DATA_DIR / "results.csv", rows, cols)
+
+    if hist_rows:
+        hist_cols = ["code", "name"] + [f"d_{d}" for d in hist_dates]
+        write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows, hist_cols)
+
+    (DATA_DIR / ".asof").write_text(asof, encoding="utf-8")
+    return len(rows), True
+
+
+def recompute_locally(codes=None, progress_cb=None):
+    """用 v27 算法本地重算 — 算当前分类 + 生成 25 天趋势历史 (2026-07-21 γ' 靶点: 215 → 25L 调度器)
+
+    流程 (六阶段调度):
+      1. _load_codes_and_pool_meta       加载 codes + name_map
+      2. _fetch_klines_with_cache         pickle 缓存 + 并行拉 K 线
+      3. _pick_hist_dates                  从最长 K 线取最后 25 天日期
+      4. _compute_metrics_and_history     算所有 ETF 的指标 + 25 天历史
+      5. _pick_asof_from_cache             asof 用 K 线最后日期
+      6. _persist_results_and_history      落盘 results.csv + trend_history.csv + .asof
 
     Returns: dict (同 refresh_data 格式)
     """
@@ -443,190 +654,22 @@ def recompute_locally(codes=None, progress_cb=None):
 
     t0 = datetime.now()
     try:
-        if codes is None:
-            pool_path = DATA_DIR / "etf_pool.csv"
-            if pool_path.exists():
-                pool = pd.read_csv(pool_path, dtype={"代码": str})
-                codes = pool["代码"].tolist()
-            else:
-                codes = []
-        name_map, _, _ = _load_pool_meta()
-
+        codes, name_map = _load_codes_and_pool_meta(codes)
         total = len(codes)
         print(f"[recompute] {total} 只 ETF,启动 v27...")
 
-        # === Pickle 缓存 — 同一个交易日复用昨天拉好的 207 只 K 线,
-        # 避免每天重拉全部（云环境被腾讯限流的风险也降低） ===
-        import pickle
-        from datetime import date as _date_cls
-        from lib.safe_io import exclusive_lock, atomic_write_pickle
-        cache_dir = DATA_DIR / ".kline_cache"
-        cache_dir.mkdir(exist_ok=True)
-        cache_key = _date_cls.today().strftime("%Y%m%d")
-        cache_path = cache_dir / f"klines_{cache_key}.pkl"
-        lock_path = cache_dir / f"klines_{cache_key}.lock"
-        kline_cache = {}
-        # 先取锁(防后台线程与 cron 互踩),锁内读 + 写 pickle
-        try:
-            with exclusive_lock(lock_path, timeout=10):
-                if cache_path.exists():
-                    try:
-                        with cache_path.open("rb") as f:
-                            kline_cache = pickle.load(f)
-                        print(f"[K线缓存] 命中 {cache_key},复用 {len(kline_cache)} 只")
-                    except Exception as e:
-                        print(f"[K线缓存] 读取失败,重新拉: {e}")
-                        kline_cache = {}
+        kline_cache = _fetch_klines_with_cache(codes, total, progress_cb)
+        hist_dates = _pick_hist_dates(kline_cache)
 
-                # 哪些没缓存到 · 还要现拉
-                to_fetch = [c for c in codes if c not in kline_cache or kline_cache[c] is None]
-                if to_fetch:
-                    print(f"[K线] 需重拉 {len(to_fetch)} 只")
+        metrics_rows, hist_rows = _compute_metrics_and_history(
+            codes, kline_cache, name_map, hist_dates, progress_cb
+        )
 
-                # 并行拉 K 线(IO 密集,多线程加速)
-                fetched = {}
-                with ThreadPoolExecutor(max_workers=10) as pool:
-                    fut_map = {pool.submit(algo.fetch_kline, code, 250): code for code in to_fetch}
-                    for i, fut in enumerate(as_completed(fut_map)):
-                        code = fut_map[fut]
-                        try:
-                            kw = fut.result()
-                        except Exception:
-                            kw = None
-                        if kw is not None and len(kw) >= 100:
-                            kw = kw.dropna(subset=["close"]).reset_index(drop=True)
-                            if len(kw) < 250:
-                                pad_needed = 250 - len(kw)
-                                first_row = kw.iloc[:1].copy()
-                                pads = pd.concat([first_row] * pad_needed, ignore_index=True)
-                                kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
-                            kline_cache[code] = kw
-                        if progress_cb:
-                            progress_cb(i + 1, total, code, None, "kline")
-
-                print(f"K 线缓存: {len(kline_cache)}/{total} 只")
-                # 拉到一部分就立刻原子写回 pickle(锁内),下一个进程能立刻用上
-                try:
-                    atomic_write_pickle(cache_path, kline_cache)
-                except Exception as e:
-                    print(f"[K线缓存] 中间落盘失败(下次重拉): {e}")
-        except TimeoutError:
-            print("[K线缓存] 锁等待超时,跳过本轮,沿用空缓存继续")
-            kline_cache = {}
-
-        # 计算所有指标 + 25 天历史
-        metrics_rows = []
-        hist_rows = []
-        # 确定 25 天日期列名 — 选最长 K 线作 pivot (避免 dict 插入顺序导致日期偏老)
-        if kline_cache:
-            pivot_code = max(kline_cache.keys(),
-                              key=lambda c: len(kline_cache[c]) if kline_cache.get(c) is not None else 0)
-            first_k = kline_cache.get(pivot_code)
-        else:
-            first_k = None
-        if first_k is not None and "date" in first_k.columns:
-            dates = pd.to_datetime(first_k["date"]).dt.strftime("%Y%m%d").tolist()
-            # 取最后 25 个交易日作为历史点
-            hist_dates = dates[-(25):] if len(dates) >= 25 else dates
-        else:
-            hist_dates = [f"d_{i}" for i in range(25)]
-
-        done = 0
-        for code in codes:
-            kw = kline_cache.get(code)
-            if kw is None:
-                # 缺失 K 线 → 填 N/A,不跳过 — 保证 207 只不丢
-                row = {"code": code, "category": name_map.get(code, code),
-                       "strength_label": "N/A", "fund_size_yi": 0,
-                       "slope_20": 0, "slope_50": 0, "slope_120": 0,
-                       "sharpe_composite": 0, "adx": 0, "up_ratio_60": 0,
-                       "n_changes": 0, "n_points": 25,
-                       "change_pct": 0}  # 2026-07-20 补: K 线缺失时 change_pct = 0
-                metrics_rows.append(row)
-                hist = {"code": code, "name": name_map.get(code, code)}
-                for t, _d in enumerate(hist_dates):
-                    hist[f"d_{_d}"] = "未知"
-                hist_rows.append(hist)
-                if progress_cb:
-                    progress_cb(done + 1, total, code, None, "no kline")
-                done += 1
-                continue
-
-            close = kw["close"].astype(float).values
-            high = kw["high"].astype(float).values if "high" in kw.columns else close
-            low = kw["low"].astype(float).values if "low" in kw.columns else close
-
-            # 当前分类
-            m = algo.calc_single_etf(kw)
-            if m is None:
-                if progress_cb:
-                    progress_cb(done + 1, total, code, None, "calc fail")
-                done += 1
-                continue
-
-            # 最新价 & 成交量
-            latest_close = close[-1] if len(close) > 0 else 0.0
-            latest_volume = kw["volume"].astype(float).values[-1] if "volume" in kw.columns and len(kw) > 0 else 0.0
-
-            # 2026-07-20 补: 当日涨跌幅 = (今日收 - 昨日收) / 昨日收 * 100
-            # 保护: len < 2 或昨日收 = 0 时为 0
-            if len(close) >= 2 and close[-2] > 0:
-                change_pct = float((close[-1] - close[-2]) / close[-2] * 100)
-            else:
-                change_pct = 0.0
-
-            # 从腾讯快照拉成交额
-            latest_amount = algo.fetch_amount(code)
-            row = {"code": code, **m,
-                   "latest_close": float(latest_close),
-                   "latest_volume": float(latest_volume),
-                   "latest_amount": float(latest_amount) if latest_amount else 0.0,
-                   "change_pct": change_pct}  # 2026-07-20 补: 当日涨跌幅字段
-            metrics_rows.append(row)
-
-            # 回看 25 天 (批量优化: ~15x 加速)
-            labels_25 = algo._compute_sliding_labels(
-                close, high, low, n_windows=25
-            )
-
-            hist = {"code": code, "name": name_map.get(code, code)}
-            for t, lbl in enumerate(labels_25):
-                hist[f"d_{hist_dates[t]}"] = lbl if len(hist_dates) > t else lbl
-            hist_rows.append(hist)
-
-            done += 1
-            if progress_cb:
-                progress_cb(done, total, code, m, "ok")
-
-        # asof 用 K 线最后日期而非执行时刻:从第一只(最完整)K线取
-        asof = datetime.now().strftime("%Y%m%d")  # fallback
-        if kline_cache:
-            _first_k = list(kline_cache.values())[0]
-            _last_date = _first_k["date"].iloc[-1]
-            _ds = str(_last_date).replace("-", "").replace("/", "")[:8]
-            if _ds.isdigit():
-                asof = _ds
+        asof = _pick_asof_from_cache(kline_cache)
         metrics_df = pd.DataFrame(metrics_rows)
-        # 迭代完后同一日 kline_cache 持久化到 pickle(原子写,锁内),
-        # 次日 refresh 只需拉未命中的部分
-        try:
-            with exclusive_lock(lock_path, timeout=10):
-                atomic_write_pickle(cache_path, kline_cache)
-            print(f"[K线缓存] 已落盘 {cache_key}: {len(kline_cache)} 只")
-        except Exception as e:
-            print(f"[K线缓存] 落盘失败(下次重拉): {e}")
+        n_rows, _ = _persist_results_and_history(metrics_df, hist_rows, hist_dates, asof)
 
-        rows, cols = _build_results_csv_from_metrics(metrics_df, asof)
-        write_csv(DATA_DIR / "results.csv", rows, cols)
-
-        # 写 trend_history — 列: code, name, d_20260529, ..., d_20260706
-        if hist_rows:
-            hist_cols = ["code", "name"] + [f"d_{d}" for d in hist_dates]
-            write_csv(DATA_DIR / "etf_trend_history.csv", hist_rows, hist_cols)
-
-        (DATA_DIR / ".asof").write_text(asof, encoding="utf-8")
-
-        return {"ok": True, "asof_date": asof, "n_etfs": len(rows),
+        return {"ok": True, "asof_date": asof, "n_etfs": n_rows,
                 "n_points": 25,
                 "fetched_at": datetime.now().isoformat(timespec="seconds"),
                 "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
