@@ -95,9 +95,8 @@ MIN_LISTING_DAYS = 250    # 至少 250 个交易日历史
 # ============================================================
 # HTTP — 复用 lib.algorithm 的 session
 # ============================================================
-# 2026-07-20 重构去重: tencent_market_prefix 统一从 lib.algorithm 引用
-# 此前本文件第 93-109 行有一份重复实现, 现删除, 改用下方 import
-from lib.algorithm import tencent_market_prefix  # noqa: F401
+# 2026-07-21 E5 迁移: tencent_market_prefix 迁到 lib.market_data (fetcher 单点权威)
+from lib.market_data import tencent_market_prefix  # noqa: F401
 
 
 # C4 加固: 错误计数器 + throttled warning (避免每只股票都打一行刷屏)
