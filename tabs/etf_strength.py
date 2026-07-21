@@ -117,63 +117,78 @@ def sort_df(df: pd.DataFrame, sort_by: str = "strength_label", sort_dir: str = "
     return out
 
 
-def render_table(df: pd.DataFrame):
-    if df.empty:
-        st.info("无匹配数据")
-        return
+# 2026-07-20 重构: 9 个列 formatter 抽到 lib/ui_components, 加列只改 dict (OCP)
+_COLUMN_FORMATS = {
+    "代码": fmt_code,
+    "名称": fmt_name,
+    "涨跌幅": fmt_chg_html,
+    "最新价": fmt_price,
+    "成交额(亿)": fmt_vol_yi,
+    "规模(亿)": fmt_yi,
+    "分类": fmt_category,
+}
+_TABLE_COLS_ORDER = [
+    "code", "name", "strength_label", "change_pct", "category",
+    "latest_close", "latest_amount", "fund_size_yi",
+]
+_TABLE_COL_RENAME = {
+    "code": "代码", "name": "名称", "strength_label": "趋势",
+    "change_pct": "涨跌幅",
+    "category": "分类",
+    "latest_close": "最新价", "latest_amount": "成交额(亿)",
+    "fund_size_yi": "规模(亿)",
+}
 
-    cols_order = [
-        "code", "name", "strength_label", "change_pct", "category",
-        "latest_close", "latest_amount",
-        "fund_size_yi",
-    ]
-    show = df[[c for c in cols_order if c in df.columns]].copy()
-    show = show.rename(columns={
-        "code": "代码", "name": "名称", "strength_label": "趋势",
-        "change_pct": "涨跌幅",
-        "category": "分类",
-        "latest_close": "最新价", "latest_amount": "成交额(亿)",
-        "fund_size_yi": "规模(亿)",
-    })
-    show["趋势"] = show["趋势"].apply(label_badge_html)
 
-    # 2026-07-20 重构: 9 个列 formatter 抽到 lib/ui_components, 加列只改 dict (OCP)
-    COLUMN_FORMATS = {
-        "代码": fmt_code,
-        "名称": fmt_name,
-        "涨跌幅": fmt_chg_html,
-        "最新价": fmt_price,
-        "成交额(亿)": fmt_vol_yi,
-        "规模(亿)": fmt_yi,
-        "分类": fmt_category,
-    }
-    for col_name, fmt_fn in COLUMN_FORMATS.items():
+def _prepare_table_data(df: pd.DataFrame) -> pd.DataFrame:
+    """2026-07-21 ζ 靶点: 抽数据 select + rename + formatter 应用 (约 20L)
+
+    纯数据处理层,无 streamlit 依赖,可单测。
+    """
+    show = df[[c for c in _TABLE_COLS_ORDER if c in df.columns]].copy()
+    show = show.rename(columns=_TABLE_COL_RENAME)
+    if "趋势" in show.columns:
+        show["趋势"] = show["趋势"].apply(label_badge_html)
+    for col_name, fmt_fn in _COLUMN_FORMATS.items():
         if col_name in show.columns:
             show[col_name] = show[col_name].apply(fmt_fn)
+    return show
 
+
+def _render_etf_table_html(show: pd.DataFrame, uid: int) -> None:
+    """2026-07-21 ζ 靶点: 渲染表格 HTML + 过滤 input + 计数 (约 20L)
+
+    视图层第一步:展示搜索框 + 表格本体 + 客户端过滤的 input 元素。
+    """
     st.markdown(
         f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:4px;'
         f'display:flex;align-items:center;gap:8px;">'
         f'<span>共 <b style="color:{TEXT};">{len(show)}</b> 只 · 点击表头排序 · 输关键词过滤</span>'
-        f'<input type="search" id="etf_search_{id(df)}" placeholder="🔍 过滤代码/名称/趋势" '
+        f'<input type="search" id="etf_search_{uid}" placeholder="🔍 过滤代码/名称/趋势" '
         f'style="margin-left:auto;background:{BG_PANEL};color:{TEXT};border:1px solid {BORDER};'
         f'border-radius:4px;padding:2px 8px;font-size:11px;width:240px;outline:none;" '
         f'autocomplete="off"/>'
-        f'<span id="etf_search_count_{id(df)}" style="color:{TEXT_DIM};font-size:10px;"></span>'
+        f'<span id="etf_search_count_{uid}" style="color:{TEXT_DIM};font-size:10px;"></span>'
         f'</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        f'<div class="etf-table-wrap" data-uid="{id(df)}">'
+        f'<div class="etf-table-wrap" data-uid="{uid}">'
         f'{show.to_html(escape=False, index=False, border=0, classes="etf-table")}'
         f'</div>',
         unsafe_allow_html=True,
     )
-    # 客户端过滤脚本：实时过滤行,不需后端 round-trip
+
+
+def _render_etf_table_interactivity(uid: int) -> None:
+    """2026-07-21 ζ 靶点: 渲染客户端 JS 排序/过滤脚本 + CSS 样式 (约 200L)
+
+    视图层第二步:把过滤/排序交互逻辑下沉到客户端,避免后端 round-trip。
+    """
     st.markdown(f"""
     <script>
     (function(){{
-      var uid = '{id(df)}';
+      var uid = '{uid}';
       var input = document.getElementById('etf_search_' + uid);
       var counter = document.getElementById('etf_search_count_' + uid);
       var wrap = document.querySelector('.etf-table-wrap[data-uid="' + uid + '"]');
@@ -192,13 +207,10 @@ def render_table(df: pd.DataFrame):
         if (counter) counter.textContent = q ? (visible + ' / ' + total) : '';
       }}
       input.addEventListener('input', apply);
-      // 按 ESC 清除
       input.addEventListener('keydown', function(e){{
         if (e.key === 'Escape') {{ input.value = ''; apply(); }}
       }});
 
-      // === 表头点击排序 ===
-      // 把初始 th 的原始内容寫到 dataset.label,这样排序时 label 不会被丢掉
       var ths = wrap.querySelectorAll('thead th');
       ths.forEach(function(th, idx){{
         if (!th.dataset.label) th.dataset.label = th.textContent.trim();
@@ -211,7 +223,6 @@ def render_table(df: pd.DataFrame):
             th.classList.remove('sort-desc');
             th.textContent = th.dataset.label; dir = null;
           }} else {{
-            // 清除同辈的排序状态
             ths.forEach(function(o){{
               if (o !== th) {{ o.classList.remove('sort-asc'); o.classList.remove('sort-desc'); }}
             }});
@@ -224,7 +235,6 @@ def render_table(df: pd.DataFrame):
             rowsArr.sort(function(a,b){{
               var av = a.children[idx].textContent.trim();
               var bv = b.children[idx].textContent.trim();
-              // 尝试按数字排序(去掉千分位/亿/万等单位后缀)
               var an = parseFloat(av.replace(/[^\\d.\\-]/g, ''));
               var bn = parseFloat(bv.replace(/[^\\d.\\-]/g, ''));
               var isNum = !isNaN(an) && !isNaN(bn) && /[\\d.]/.test(av) && /[\\d.]/.test(bv);
@@ -233,16 +243,14 @@ def render_table(df: pd.DataFrame):
             }});
             rowsArr.forEach(function(r){{ tbody.appendChild(r); }});
           }} else {{
-            // 复位到初始顺序（重读原 DOM）
             rowsArr.sort(function(a,b){{
               return (parseInt(a.dataset.origIdx||0) - parseInt(b.dataset.origIdx||0));
             }});
             rowsArr.forEach(function(r){{ tbody.appendChild(r); }});
           }}
-          apply();  // 重排后重新应用过滤
+          apply();
         }});
       }});
-      // 保存原始顺序
       rows.forEach(function(r,i){{ r.dataset.origIdx = i; }});
     }})();
     </script>
@@ -276,7 +284,6 @@ def render_table(df: pd.DataFrame):
       .etf-table th.sort-desc::after {{ content: ' ▼'; color: {ACCENT_DN}; }}
       .etf-table th:nth-child(2),
       .etf-table th:nth-child(3) {{ min-width: 80px; }}
-      /* [FIX] Bug #5 - 趋势/分类列宽度被挤压 */
       .etf-table th:nth-child(3),
       .etf-table td:nth-child(3) {{ min-width: 84px; }}
       .etf-table th:nth-child(5),
@@ -288,7 +295,6 @@ def render_table(df: pd.DataFrame):
         font-size: 12px;
       }}
       .etf-table td:nth-child(2) {{ max-width: 220px; overflow: hidden; text-overflow: ellipsis; }}
-      /* Step3: 行hover详情增强 — 渐变背景 + 左侧色条加粗 + 数字微高亮 */
       .etf-table tr {{
         transition: all 0.18s cubic-bezier(0.4,0,0.2,1) !important;
         position: relative;
@@ -304,11 +310,9 @@ def render_table(df: pd.DataFrame):
         font-weight: 700;
       }}
       .etf-table tr:hover td:nth-child(4) {{
-        /* 涨跌幅列hover高亮 */
         filter: brightness(1.3);
       }}
       .etf-table tr:hover td:nth-child(2)::after {{
-        /* 名称列hover后出现 » 提示 */
         content: ' › 查看详情';
         color: #5b93e0;
         font-size: 10px;
@@ -317,7 +321,6 @@ def render_table(df: pd.DataFrame):
         opacity: 0.8;
       }}
       .etf-table tr:last-child td {{ border-bottom: none; }}
-      /* 回到顶部浮钮(右下角,避免跟底部 footer 重叠) */
       .back-to-top {{
         position:fixed;bottom:60px;right:24px;z-index:1000;
         width:38px;height:38px;border-radius:50%;
@@ -332,7 +335,6 @@ def render_table(df: pd.DataFrame):
         background:{BG_PANEL_HI};border-color:{TEXT_DIM};
         color:{TEXT};transform:translateY(-2px);
       }}
-      /* Step3: 加载骨架屏 — 在 streamlit 刷新状态时使用 shimmer 动效 */
       @keyframes skeleton-shimmer {{
         0%   {{ background-position: -400px 0; }}
         100% {{ background-position: 400px 0; }}
@@ -351,6 +353,21 @@ def render_table(df: pd.DataFrame):
       .skeleton-bar.medium {{ width: 80%; }}
     </style>
     """, unsafe_allow_html=True)
+
+
+def render_table(df: pd.DataFrame):
+    """ETF 列表表格 (2026-07-21 ζ 靶点: 234L → 调度器 + 3 个 _xxx 子函数)
+
+    三段式:数据准备 → HTML 渲染 → 交互脚本/CSS
+    """
+    if df.empty:
+        st.info("无匹配数据")
+        return
+
+    show = _prepare_table_data(df)
+    uid = id(df)
+    _render_etf_table_html(show, uid)
+    _render_etf_table_interactivity(uid)
 
 
 def render_history_table(df_hist: pd.DataFrame, df_res: pd.DataFrame):
