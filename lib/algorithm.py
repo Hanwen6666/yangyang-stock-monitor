@@ -5,12 +5,11 @@ ETF 强弱趋势算法 v27 — 从理财助理生产代码移植
 
 ⚠️ 不要修改阈值(已经过 20+ 次迭代调优)
 
-2026-07-21 E 靶点重构:
+2026-07-21 E 靶点重构完成 (E5 删 re-export):
   - K 线获取 / 解析 / 成交额快照 / 市场前缀判断 ~ 9 个函数
     全部下沉到 lib.market_data.py (单点权威)
-  - 本文件 (lib.algorithm.py) 仅保留纯算法 (slope / sharpe / adx / classify)
-  - 旧调用方 from lib.algorithm import tencent_market_prefix 仍能工作
-    (re-export 兼容期)
+  - 本文件 (lib/algorithm.py) 仅保留纯算法 (slope / sharpe / adx / classify)
+  - 调用方均已迁到 lib.market_data
 """
 import math
 import io
@@ -18,20 +17,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-# ============================================================
-# 2026-07-21 E 靶点: 从 lib.market_data 引入 K 线 fetcher + HTTP 工具
-# (本文件不再实现这些 — 单点权威 lib.market_data.py)
-# ============================================================
-from lib.market_data import (  # noqa: F401
-    _SESSION, _http_get,
-    tencent_market_prefix,
-    _parse_tencent_klines, _parse_akshare, _cross_validate,
-    fetch_kline, fetch_kline_tencent,
-    _parse_amount_from_text, fetch_amount,
-)
-
 try:
-    import akshare  # noqa: F401  保持原始存在性
+    import akshare  # noqa: F401  保留 akshare 导入(其他模块可能用)
 except ImportError:
     pass
 
