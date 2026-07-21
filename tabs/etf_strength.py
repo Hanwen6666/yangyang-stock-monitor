@@ -906,34 +906,8 @@ def _slope_color_fn(v):
     return ACCENT_UP if v > 0 else ACCENT_DN
 
 
-def render_stock_detail(df_res: pd.DataFrame):
-    """个股 ETF 分析子视图 - 东财风格
-
-    跨顶层 Tab 切换时,搜索词 / 分析结果都会被 session_state 冱底保留,
-    用户从大盘总览切出去再切回来还能看到上次看的 K 线图。
-    """
-    st.markdown(f'<div style="margin-bottom:8px;"></div>', unsafe_allow_html=True)
-
-    # 搜索栏
-    search_items = []
-    for _, r in df_res.iterrows():
-        c = str(r["code"]).zfill(6)
-        n = str(r.get("name", ""))
-        search_items.append(f"{c} {n}")
-
-    # 🔧 修复：df_res 为空时 selectbox 会抛错中断后续渲染(切到个股分析 tab 出现整页空白)
-    # 提前 early return,显示占位提示
-    if not search_items:
-        st.markdown(
-            f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
-            f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
-            f'暂无可分析个股(数据未就绪)<br/>请稍后重试或点击顶部「🔄 数据刷新」</div>',
-            unsafe_allow_html=True,
-        )
-        return
-
-    # 🔧 修复：跨顶层 Tab 切换后 widget key 会丢，用 session_state 离冱
-    # 初始化选中状态
+def _init_stock_detail_state():
+    """2026-07-21 α 靶点: 初始化 stock_detail 跨 Tab 保持的 session_state"""
     if "stock_detail_selected" not in st.session_state:
         st.session_state.stock_detail_selected = None
     if "stock_detail_analysed" not in st.session_state:
@@ -941,9 +915,36 @@ def render_stock_detail(df_res: pd.DataFrame):
     if "stock_detail_analysed_code" not in st.session_state:
         st.session_state.stock_detail_analysed_code = None
 
+
+def _build_search_items(df_res: pd.DataFrame) -> list:
+    """2026-07-21 α 靶点: 构建 selectbox 搜索选项(code + name)"""
+    search_items = []
+    for _, r in df_res.iterrows():
+        c = str(r["code"]).zfill(6)
+        n = str(r.get("name", ""))
+        search_items.append(f"{c} {n}")
+    return search_items
+
+
+def _resolve_chip_fallback_label(search_items: list) -> str | None:
+    """2026-07-21 α 靶点: 从 session_state.analysed_code 反查 full label (chip 点击后)"""
+    chip_code = st.session_state.stock_detail_analysed_code
+    if not chip_code:
+        return None
+    for _lbl in search_items:
+        if _lbl.startswith(chip_code):
+            return _lbl
+    return None
+
+
+def _render_stock_search_bar(search_items: list) -> tuple:
+    """2026-07-21 α 靶点: 渲染搜索栏 (selectbox + 分析按钮)
+
+    Returns:
+        (selected, go_btn) 用户当前选中的 label 和是否点了分析
+    """
     c1, c2 = st.columns([3, 1])
     with c1:
-        # selectbox 的 index 从 session_state 反查，跨 Tab 后保留
         _cur_label = st.session_state.stock_detail_selected
         _cur_idx = search_items.index(_cur_label) if _cur_label in search_items else None
         selected = st.selectbox(
@@ -953,18 +954,11 @@ def render_stock_detail(df_res: pd.DataFrame):
             label_visibility="collapsed",
             key="stock_detail_search",
         )
-        # 回到顶部后会丢，事后同步回去
         if selected:
             st.session_state.stock_detail_selected = selected
-        # 🔥 热门 chip 点过后：selected 可能为 None, selected fallback 为 chip_code 对应 label
-        if not selected and st.session_state.stock_detail_analysed_code:
-            _chip_label = None
-            for _lbl in search_items:
-                if _lbl.startswith(st.session_state.stock_detail_analysed_code):
-                    _chip_label = _lbl
-                    break
-            if _chip_label:
-                selected = _chip_label
+        # 🔥 热门 chip 点过后：selected 可能为 None, fallback 为 chip_code 对应 label
+        if not selected:
+            selected = _resolve_chip_fallback_label(search_items)
     with c2:
         go_btn = st.button(
             "🔍 分析",
@@ -972,166 +966,174 @@ def render_stock_detail(df_res: pd.DataFrame):
             type="primary",
             key="stock_detail_go",
         )
+    return selected, go_btn
 
-    # 🔥 热门 chip 点过后：selected 有值但 go_btn=False → 免敲门
-    if selected and not go_btn and st.session_state.stock_detail_analysed_code:
-        _sel_code = selected.split()[0].strip().zfill(6)
-        if _sel_code == st.session_state.stock_detail_analysed_code:
-            go_btn = True  # 走“分析”路径
 
-    # 用户未首次点击「分析」且 session_state 中有最近看过的 code —— 自动恢复
-    if not go_btn and not st.session_state.stock_detail_analysed:
-        # === 热门 ETF 示例 · 按交易额选 top 6 · 真实 st.button ===
-        try:
-            _top = df_res.sort_values("latest_amount", ascending=False).head(6)
-            st.markdown(
-                f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;padding:30px 0 8px;">'
-                f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>·K 线图加载后自动滚到下方'
-                f'</div>'
-                f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:8px;'
-                f'text-transform:uppercase;letter-spacing:0.5px;text-align:center;">🔥 热门 ETF · 一键加载</div>',
-                unsafe_allow_html=True,
+def _should_enter_chips_branch(go_btn: bool) -> bool:
+    """2026-07-21 α 靶点: 判断是否走“未首次点击分析”分支 (渲染热门 chip)"""
+    return (not go_btn) and (not st.session_state.stock_detail_analysed)
+
+
+def _render_hot_etf_chips(df_res: pd.DataFrame) -> None:
+    """2026-07-21 α 靶点: 渲染热门 ETF chip (top 6 按成交额)
+
+    使用 on_click callback (而非 post-button 检查) 保证 streamlit 1.40+
+    selectbox widget 同步性。
+    """
+    st.markdown(
+        f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;padding:30px 0 8px;">'
+        f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>·K 线图加载后自动滚到下方'
+        f'</div>'
+        f'<div style="color:{TEXT_DIM};font-size:10px;margin-bottom:8px;'
+        f'text-transform:uppercase;letter-spacing:0.5px;text-align:center;">🔥 热门 ETF · 一键加载</div>',
+        unsafe_allow_html=True,
+    )
+    _top = df_res.sort_values("latest_amount", ascending=False).head(6)
+    _cols = st.columns(6, gap="small")
+
+    def _make_chip_handler(_full_label, _code):
+        def _handler():
+            # Callback runs in guaranteed pre-rerun context (streamlit 1.40+).
+            st.session_state.stock_detail_selected = _full_label
+            st.session_state.stock_detail_analysed = True
+            st.session_state.stock_detail_analysed_code = _code
+            st.session_state["stock_detail_search"] = _full_label
+        return _handler
+
+    for i, (_, r) in enumerate(_top.iterrows()):
+        with _cols[i]:
+            _code = str(r["code"]).zfill(6)
+            _name = str(r.get("name", ""))[:6]
+            _full_label = f"{_code} {r.get('name','')}"
+            st.button(
+                f"🔥 {_code}",
+                key=f"hot_chip_{_code}",
+                help=f"{_name} · 点击直接加载 K 线",
+                use_container_width=True,
+                on_click=_make_chip_handler(_full_label, _code),
             )
-            _cols = st.columns(6, gap="small")
+    _sub_html = '<div style="display:flex;gap:6px;margin-top:4px;">'
+    for i in range(len(_top)):
+        _sub_html += f'<div style="flex:1;text-align:center;color:{TEXT_DIM};font-size:9px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px;">{str(_top.iloc[i].get("name",""))[:5]}</div>'
+    _sub_html += '</div>'
+    st.markdown(_sub_html, unsafe_allow_html=True)
 
-            def _make_chip_handler(_full_label, _code):
-                def _handler():
-                    # [FIX] Bug #11 - use on_click callback instead of post-button check
-                    # The previous code did `if _clicked: st.session_state.X = Y` which
-                    # ran DURING the same render pass - but with streamlit 1.40+ selectbox
-                    # widget, the second render after st.rerun() didn't sync widget state,
-                    # so selected stayed empty and the chips branch kept rendering.
-                    # Callback runs in a guaranteed pre-rerun context.
-                    st.session_state.stock_detail_selected = _full_label
-                    st.session_state.stock_detail_analysed = True
-                    st.session_state.stock_detail_analysed_code = _code
-                    # Keep the selectbox widget key in sync too, for fallback display.
-                    st.session_state["stock_detail_search"] = _full_label
-                return _handler
 
-            for i, (_, r) in enumerate(_top.iterrows()):
-                with _cols[i]:
-                    _code = str(r["code"]).zfill(6)
-                    _name = str(r.get("name", ""))[:6]
-                    _full_label = f"{_code} {r.get('name','')}"
-                    st.button(
-                        f"🔥 {_code}",
-                        key=f"hot_chip_{_code}",
-                        help=f"{_name} · 点击直接加载 K 线",
-                        use_container_width=True,
-                        on_click=_make_chip_handler(_full_label, _code),
-                    )
-            # 名称副标签
-            _sub_html = '<div style="display:flex;gap:6px;margin-top:4px;">'
-            for i in range(len(_top)):
-                _sub_html += f'<div style="flex:1;text-align:center;color:{TEXT_DIM};font-size:9px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px;">{str(_top.iloc[i].get("name",""))[:5]}</div>'
-            _sub_html += '</div>'
-            st.markdown(_sub_html, unsafe_allow_html=True)
-        except Exception:
-            st.markdown(
-                f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
-                f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
-                f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
-                unsafe_allow_html=True,
-            )
-        return
+def _should_skip_analysis_gate(selected, go_btn: bool) -> bool:
+    """2026-07-21 α 靶点: chip 点击后免敲门判断 (selected 有值但 go_btn=False)"""
+    if not selected or go_btn:
+        return False
+    sel_code = selected.split()[0].strip().zfill(6)
+    return sel_code == st.session_state.get("stock_detail_analysed_code")
 
-    # 若 session_state 中存了上次分析的 code,可以跨 Tab 恢复 (选中或热门 chip 点过)
-    if not selected and st.session_state.stock_detail_analysed_code:
-        # 从 analysed_code 反查 full label
-        for _lbl in search_items:
-            if _lbl.startswith(st.session_state.stock_detail_analysed_code):
-                selected = _lbl
-                break
 
-    # 🔥 热门 chip 点击直接走了：selected 有了但 go_btn 是 False → 免敲门
-    if selected and not go_btn:
-        _sel_code = selected.split()[0].strip().zfill(6)
-        # 如果该 selected 是刚由 chip 设置的,免敲门
-        if _sel_code == st.session_state.get("stock_detail_analysed_code"):
-            # 但 chip 后的首次 render 默认走 chips 分支,不会到这里
-            # 这里只是备份闸
-            pass
+def _resolve_selected_label(search_items: list, selected) -> str | None:
+    """2026-07-21 α 靶点: 跨 Tab 恢复 selected (从 analysed_code)"""
+    if selected:
+        return selected
+    if not st.session_state.stock_detail_analysed_code:
+        return None
+    for _lbl in search_items:
+        if _lbl.startswith(st.session_state.stock_detail_analysed_code):
+            return _lbl
+    return None
 
-    if not selected or not go_btn:
-        # 未点击【分析】&& session 也没缓存 code  —— 占位提示
-        st.session_state.stock_detail_analysed = False
-        st.markdown(
-            f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
-            f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
-            f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
-            unsafe_allow_html=True,
-        )
-        return
 
-    st.session_state.stock_detail_analysed = True
-    st.session_state.stock_detail_analysed_code = selected  # 冱底
-    # 每次点分析都滚动到 K 线图
-    _scroll_after_render = True
+def _prepare_stock_kline(code: str, etf_name: str) -> dict | None:
+    """2026-07-21 α 靶点: 加载 + 计算 ETF K 线指标
 
-    st.session_state.stock_detail_analysed = True
-    # 每次点分析都滚动到 K 线图(不靠"首次"那个不可靠的标志位)
-    _scroll_after_render = True
-
-    code = selected.split()[0].strip().zfill(6)
-    etf_name = selected.split(maxsplit=1)[-1] if len(selected.split()) > 1 else ""
-
+    Returns:
+        dict 含 kw_show, kw_250, m, latest_price, yesterday_close, change_pct, direction;
+        或 None (加载失败)
+    """
     with st.spinner(f"获取 {code} {etf_name} K 线数据..."):
         kline = _cached_fetch_kline(code, 250)
 
     if kline is None or len(kline) < 100:
         st.error(f"无法获取 {code} 的数据,请检查代码或稍后重试")
-        return
+        return None
 
     kw = kline.dropna(subset=["close"]).reset_index(drop=True)
     if len(kw) < 250:
-        # 不足 250 日:前向填充到 250,让 calc_single_etf 能跑
         first_row = kw.iloc[:1].copy()
         pad_cnt = 250 - len(kw)
         pads = pd.concat([first_row] * pad_cnt, ignore_index=True)
         kw = pd.concat([pads, kw], ignore_index=True).reset_index(drop=True)
-    # K线默认显示最近120根(东财风格),250根太挤会变成细线
     kw_show = kw.iloc[-120:].reset_index(drop=True)
     kw_250 = kw.iloc[-250:].reset_index(drop=True)
     m = algo.calc_single_etf(kw)
     close = kw_250["close"].astype(float).values
-    o = kw_250["open"].astype(float).values
-    vol = kw_250["volume"].astype(float).values if "volume" in kw_250.columns else [0]
+    yesterday_close = close[-2] if len(close) > 1 else close[-1]
     latest_price = close[-1]
-    latest_vol = vol[-1]
-    yesterday_close = close[-2] if len(close) > 1 else latest_price
     change_pct = ((latest_price - yesterday_close) / yesterday_close) * 100
     direction = "up" if latest_price >= yesterday_close else "dn"
+    return {
+        "kw_show": kw_show, "kw_250": kw_250, "m": m,
+        "latest_price": latest_price, "yesterday_close": yesterday_close,
+        "change_pct": change_pct, "direction": direction,
+    }
 
-    # 从 df_res 拿信息
-    res_row = df_res[df_res["code"].astype(str).str.zfill(6) == code]
-    category = res_row["category"].iloc[0] if len(res_row) > 0 else "-"
-    fund_size = res_row["fund_size_yi"].iloc[0] if len(res_row) > 0 else 0
 
-    # === K 线图(主图+成交量副图,CDN lightweight-charts) ===
-    # 将"今日成交额"插到 kw_show 的最后一根上(历史处仍依赖估算 fallback,
-    # 至少最新一日是真实成交额)
-    kw_show_chart = kw_show.copy()
-    try:
-        if "amount" not in kw_show_chart.columns:
-            kw_show_chart["amount"] = None
-        # 最新一日: 取自 df_res 的 latest_amount,或补拉一次
-        _amt_now = float(_cached_fetch_amount(code) or 0)
-        if _amt_now > 0 and len(kw_show_chart) > 0:
-            kw_show_chart.iloc[-1, kw_show_chart.columns.get_loc("amount")] = _amt_now
-    except Exception:
-        pass
-
+def _render_stock_kline_chart(code: str, kw_show_chart: pd.DataFrame) -> None:
+    """2026-07-21 α 靶点: 渲染 K 线图 (主图+成交量副图, CDN lightweight-charts)"""
     chart_html = _kline_chart_html(
         kw_show_chart,
         amount_series=kw_show_chart["amount"] if "amount" in kw_show_chart.columns else None,
     )
     st.components.v1.html(chart_html, height=CHART_KLINE_HEIGHT)
 
-    # 点分析后自动滚动到 K 线图(iframe 渲染后才生效)
-    if _scroll_after_render:
-        # 使用更稳定的锚点选择器 + 三个备选选择器跨 Streamlit 版本
-        scroll_js = """
+
+def _enrich_chart_with_latest_amount(code: str, kw_show_chart: pd.DataFrame) -> pd.DataFrame:
+    """2026-07-21 α 靶点: 将今日成交额插到 K 线最后一根 (避免估算出错)"""
+    kw_show_chart = kw_show_chart.copy()
+    try:
+        if "amount" not in kw_show_chart.columns:
+            kw_show_chart["amount"] = None
+        _amt_now = float(_cached_fetch_amount(code) or 0)
+        if _amt_now > 0 and len(kw_show_chart) > 0:
+            kw_show_chart.iloc[-1, kw_show_chart.columns.get_loc("amount")] = _amt_now
+    except Exception:
+        pass
+    return kw_show_chart
+
+
+def _render_stock_metric_strip(code: str, df_res: pd.DataFrame, info: dict) -> None:
+    """2026-07-21 α 靶点: 渲染一行指标条 (所有技术指标)"""
+    m = info["m"]
+    if not m:
+        return
+    latest_price = info["latest_price"]
+    change_pct = info["change_pct"]
+    direction = info["direction"]
+    res_row = df_res[df_res["code"].astype(str).str.zfill(6) == code]
+    category = res_row["category"].iloc[0] if len(res_row) > 0 else "-"
+    fund_size = res_row["fund_size_yi"].iloc[0] if len(res_row) > 0 else 0
+
+    st.markdown(f'<div style="height:2px"></div>', unsafe_allow_html=True)
+    metrics = [
+        ("最新价", f"{latest_price:.3f}", TEXT),
+        ("涨跌幅", "0.00%" if change_pct == 0 else f"{change_pct:+.2f}%",
+         ACCENT_UP if direction == "up" else ACCENT_DN),
+        ("成交额", f"{(_cached_fetch_amount(code) or 0) / 1e8:.2f}亿", TEXT),
+        ("分类", category, TEXT_MUTED),
+        ("规模", f"{fund_size:.1f}亿", TEXT),
+        ("趋势", m["strength_label"], LABEL_STYLES.get(m["strength_label"], {}).get("glow", TEXT)),
+        ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] is not None else "-",
+         _slope_color_fn(m.get('slope_20'))),
+        ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] is not None else "-",
+         _slope_color_fn(m.get('slope_50'))),
+        ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] is not None else "-",
+         _slope_color_fn(m.get('slope_120'))),
+        ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] is not None else "-", TEXT),
+        ("ADX", f"{m['adx']:.2f}" if m['adx'] else "-", TEXT),
+        ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] is not None else "-", TEXT),
+    ]
+    st.markdown(metric_row_html(metrics), unsafe_allow_html=True)
+
+
+def _render_scroll_to_kline_js() -> None:
+    """2026-07-21 α 靶点: 点分析后滚动到 K 线图的 JS (iframe 渲染后才生效)"""
+    scroll_js = """
 <script>
 (function(){
   function go(){
@@ -1144,7 +1146,6 @@ def render_stock_detail(df_res: pd.DataFrame):
     for (var i=0;i<sels.length;i++){
       var el = document.querySelector(sels[i]);
       if (el) {
-        // 找到包含 K 线图的最近组件容器,在其上面洨动
         var target = el.closest('section') || el;
         target.scrollIntoView({behavior:'smooth', block:'start'});
         return;
@@ -1156,31 +1157,71 @@ def render_stock_detail(df_res: pd.DataFrame):
 })();
 </script>
 """
-        st.markdown(scroll_js, unsafe_allow_html=True)
+    st.markdown(scroll_js, unsafe_allow_html=True)
 
-    # === 指标条(合并为一行,含所有指标) ===
-    if m:
-        st.markdown(f'<div style="height:2px"></div>', unsafe_allow_html=True)
 
-        metrics = [
-            ("最新价", f"{latest_price:.3f}", TEXT),
-            ("涨跌幅", "0.00%" if change_pct == 0 else f"{change_pct:+.2f}%",
-             ACCENT_UP if direction == "up" else ACCENT_DN),
-            ("成交额", f"{(_cached_fetch_amount(code) or 0) / 1e8:.2f}亿", TEXT),
-            ("分类", category, TEXT_MUTED),
-            ("规模", f"{fund_size:.1f}亿", TEXT),
-            ("趋势", m["strength_label"], LABEL_STYLES.get(m["strength_label"], {}).get("glow", TEXT)),
-            ("20日斜率", f"{m['slope_20']:.4f}" if m['slope_20'] is not None else "-",
-             _slope_color_fn(m.get('slope_20'))),
-            ("50日斜率", f"{m['slope_50']:.4f}" if m['slope_50'] is not None else "-",
-             _slope_color_fn(m.get('slope_50'))),
-            ("120日斜率", f"{m['slope_120']:.4f}" if m['slope_120'] is not None else "-",
-             _slope_color_fn(m.get('slope_120'))),
-            ("夏普", f"{m['sharpe_composite']:.3f}" if m['sharpe_composite'] is not None else "-", TEXT),
-            ("ADX", f"{m['adx']:.2f}" if m['adx'] else "-", TEXT),
-            ("60日↑%", f"{m['up_ratio_60']*100:.1f}%" if m['up_ratio_60'] is not None else "-", TEXT),
-        ]
-        st.markdown(metric_row_html(metrics), unsafe_allow_html=True)
+def render_stock_detail(df_res: pd.DataFrame):
+    """个股 ETF 分析子视图 - 东财风格 (2026-07-21 α 靶点: 275L → 25L 调度器)
+
+    跨顶层 Tab 切换时,搜索词 / 分析结果都会被 session_state 冱底保留。
+    六阶段调度:init → search → gate → load → chart → metrics
+    """
+    st.markdown(f'<div style="margin-bottom:8px;"></div>', unsafe_allow_html=True)
+
+    _init_stock_detail_state()
+    search_items = _build_search_items(df_res)
+
+    if not search_items:
+        st.markdown(
+            f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
+            f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
+            f'暂无可分析个股(数据未就绪)<br/>请稍后重试或点击顶部「🔄 数据刷新」</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    selected, go_btn = _render_stock_search_bar(search_items)
+
+    if _should_enter_chips_branch(go_btn):
+        try:
+            _render_hot_etf_chips(df_res)
+        except Exception:
+            st.markdown(
+                f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
+                f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
+                f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
+                unsafe_allow_html=True,
+            )
+        return
+
+    if _should_skip_analysis_gate(selected, go_btn):
+        go_btn = True
+    selected = _resolve_selected_label(search_items, selected)
+
+    if not selected or not go_btn:
+        st.session_state.stock_detail_analysed = False
+        st.markdown(
+            f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;'
+            f'padding:40px 0;border:1px dashed {BORDER};border-radius:8px;">'
+            f'输入 ETF 代码或中文名称搜索后点击 <b style="color:{TEXT};">🔍 分析</b>,K 线图加载后会自动滚到下方</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.session_state.stock_detail_analysed = True
+    st.session_state.stock_detail_analysed_code = selected
+
+    code = selected.split()[0].strip().zfill(6)
+    etf_name = selected.split(maxsplit=1)[-1] if len(selected.split()) > 1 else ""
+
+    info = _prepare_stock_kline(code, etf_name)
+    if info is None:
+        return
+
+    kw_show_chart = _enrich_chart_with_latest_amount(code, info["kw_show"])
+    _render_stock_kline_chart(code, kw_show_chart)
+    _render_scroll_to_kline_js()
+    _render_stock_metric_strip(code, df_res, info)
 
 
 
