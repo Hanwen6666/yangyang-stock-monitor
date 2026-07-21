@@ -683,6 +683,30 @@ def recompute_locally(codes=None, progress_cb=None):
                 "mode": "local"}
 
 
+def _check_cloudbase_health(timeout=3):
+    """2026-07-21 A: 检查 CloudBase API 是否可达 (为 streamlit banner 提供状态)
+
+    轻量 GET 请求, 3s timeout (避免阻塞启动)
+    Returns:
+        dict: {"ok": bool, "latency_ms": int, "error": str or None, "checked_at": ISO str}
+    """
+    t0 = datetime.now()
+    try:
+        req = urllib.request.Request(
+            DEFAULT_BASE + "?asof_date=" + datetime.now().strftime("%Y%m%d"),
+            headers={"User-Agent": "yangyang-health/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            r.read(64)  # 读少量数据即可
+        latency = int((datetime.now() - t0).total_seconds() * 1000)
+        return {"ok": True, "latency_ms": latency, "error": None,
+                "checked_at": datetime.now().isoformat(timespec="seconds")}
+    except Exception as e:
+        latency = int((datetime.now() - t0).total_seconds() * 1000)
+        return {"ok": False, "latency_ms": latency, "error": str(e)[:100],
+                "checked_at": datetime.now().isoformat(timespec="seconds")}
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--base", default=DEFAULT_BASE)
