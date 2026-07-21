@@ -879,52 +879,8 @@ def compute_backtest_curve(
     # 6. 归因: 转为 DataFrame 排序
     contrib_df = _compute_attribution_dataframe(contribution, pool)
 
-    # 7. 分年度拆分
-    yearly = {}
-    if dates and len(dates) > 1:
-        dates_arr = pd.to_datetime(dates)
-        years_list = sorted(set(dates_arr.year.tolist()))
-        nav_s = pd.Series(nav_strategy)
-        nav_b = pd.Series(nav_benchmark)
-        for y in years_list:
-            mask = dates_arr.year == y
-            if mask.sum() < 5:
-                continue
-            nav_y = nav_s[mask].reset_index(drop=True)
-            nav_b_y = nav_b[mask].reset_index(drop=True)
-            if len(nav_y) < 2:
-                continue
-            # 归一化: 区间内第一天 = 1.0
-            nav_y_norm = nav_y / nav_y.iloc[0]
-            nav_b_y_norm = nav_b_y / nav_b_y.iloc[0]
-            y_total = float(nav_y_norm.iloc[-1] - 1)
-            y_b_total = float(nav_b_y_norm.iloc[-1] - 1)
-            y_days = len(nav_y)
-            y_years = max(y_days / 244.0, 0.01)
-            y_ann = (1 + y_total) ** (1 / y_years) - 1 if y_total > -1 else -1.0
-            y_b_ann = (1 + y_b_total) ** (1 / y_years) - 1 if y_b_total > -1 else -1.0
-            y_mdd = float(((nav_y_norm - nav_y_norm.cummax()) / nav_y_norm.cummax()).min())
-            y_daily = nav_y_norm.pct_change().fillna(0)
-            y_daily_b = nav_b_y_norm.pct_change().fillna(0)
-            y_sharpe = float(y_daily.mean() / y_daily.std() * (244 ** 0.5)) if y_daily.std() > 0 else 0.0
-            y_win = float((y_daily > y_daily_b).mean())
-            yearly[str(y)] = {
-                "days": int(y_days),
-                "total": y_total,
-                "annual": y_ann,
-                "mdd": y_mdd,
-                "sharpe": y_sharpe,
-                "win_rate": y_win,
-                "bm_total": y_b_total,
-                "bm_annual": y_b_ann,
-                "excess": y_total - y_b_total,
-                "start_date": str(dates_arr[mask][0])[:10],
-                "end_date": str(dates_arr[mask][-1])[:10],
-                "rebalance_count": int(sum(
-                    1 for dt in daily_top
-                    if pd.Timestamp(dt["date"]).year == y
-                )),
-            }
+    # 7. 分年度拆分 (2026-07-21 β 靶点: 抽到 _build_yearly_metrics helper)
+    yearly = _build_yearly_metrics(dates, nav_strategy, nav_benchmark, daily_top)
 
     return {
         "dates": [str(d.date()) if hasattr(d, "date") else str(d)[:10] for d in dates],
@@ -1824,3 +1780,58 @@ def _compute_attribution_dataframe(contribution, pool):
         contrib_df = contrib_df.sort_values("contribution", ascending=False).reset_index(drop=True)
         contrib_df["rank"] = contrib_df.index + 1
     return contrib_df
+
+
+def _build_yearly_metrics(dates, nav_strategy, nav_benchmark, daily_top):
+    """2026-07-21 β 靶点: 抽自 compute_backtest_curve L882-925
+
+    按年度拆分回测指标 (天数/累计/年化/最大回撤/夏普/胜率/调仓次数)
+    返回 {str(year): {指标 dict}}
+    """
+    yearly = {}
+    if not dates or len(dates) <= 1:
+        return yearly
+    dates_arr = pd.to_datetime(dates)
+    years_list = sorted(set(dates_arr.year.tolist()))
+    nav_s = pd.Series(nav_strategy)
+    nav_b = pd.Series(nav_benchmark)
+    for y in years_list:
+        mask = dates_arr.year == y
+        if mask.sum() < 5:
+            continue
+        nav_y = nav_s[mask].reset_index(drop=True)
+        nav_b_y = nav_b[mask].reset_index(drop=True)
+        if len(nav_y) < 2:
+            continue
+        # 归一化: 区间内第一天 = 1.0
+        nav_y_norm = nav_y / nav_y.iloc[0]
+        nav_b_y_norm = nav_b_y / nav_b_y.iloc[0]
+        y_total = float(nav_y_norm.iloc[-1] - 1)
+        y_b_total = float(nav_b_y_norm.iloc[-1] - 1)
+        y_days = len(nav_y)
+        y_years = max(y_days / 244.0, 0.01)
+        y_ann = (1 + y_total) ** (1 / y_years) - 1 if y_total > -1 else -1.0
+        y_b_ann = (1 + y_b_total) ** (1 / y_years) - 1 if y_b_total > -1 else -1.0
+        y_mdd = float(((nav_y_norm - nav_y_norm.cummax()) / nav_y_norm.cummax()).min())
+        y_daily = nav_y_norm.pct_change().fillna(0)
+        y_daily_b = nav_b_y_norm.pct_change().fillna(0)
+        y_sharpe = float(y_daily.mean() / y_daily.std() * (244 ** 0.5)) if y_daily.std() > 0 else 0.0
+        y_win = float((y_daily > y_daily_b).mean())
+        yearly[str(y)] = {
+            "days": int(y_days),
+            "total": y_total,
+            "annual": y_ann,
+            "mdd": y_mdd,
+            "sharpe": y_sharpe,
+            "win_rate": y_win,
+            "bm_total": y_b_total,
+            "bm_annual": y_b_ann,
+            "excess": y_total - y_b_total,
+            "start_date": str(dates_arr[mask][0])[:10],
+            "end_date": str(dates_arr[mask][-1])[:10],
+            "rebalance_count": int(sum(
+                1 for dt in daily_top
+                if pd.Timestamp(dt["date"]).year == y
+            )),
+        }
+    return yearly
