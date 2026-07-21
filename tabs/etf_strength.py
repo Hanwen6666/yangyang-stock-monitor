@@ -28,6 +28,7 @@ from lib.ui_components import (
     label_badge_html, kpi_card, metric_row_html,
     fmt_code, fmt_name, fmt_chg_html, fmt_price,
     fmt_vol_yi, fmt_vol_simple, fmt_yi, fmt_category,
+    height_spacer,  # 2026-07-21 δ 靶点
 )  # 2026-07-20 重构: 9 个列 formatter 抽离
 
 
@@ -627,7 +628,7 @@ def render_list_view(df_res: pd.DataFrame, label_filter: str | None = None):
     if cat_filter:
         title_extra += f" · {len(cat_filter)}个行业"
 
-    st.markdown(f'<div style="height:6px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(6), unsafe_allow_html=True)
     if df_view.empty:
         st.info(f"该分类下暂无 ETF{title_extra}")
     else:
@@ -1109,7 +1110,7 @@ def _render_stock_metric_strip(code: str, df_res: pd.DataFrame, info: dict) -> N
     category = res_row["category"].iloc[0] if len(res_row) > 0 else "-"
     fund_size = res_row["fund_size_yi"].iloc[0] if len(res_row) > 0 else 0
 
-    st.markdown(f'<div style="height:2px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(2), unsafe_allow_html=True)
     metrics = [
         ("最新价", f"{latest_price:.3f}", TEXT),
         ("涨跌幅", "0.00%" if change_pct == 0 else f"{change_pct:+.2f}%",
@@ -1264,7 +1265,7 @@ def render_overview(df_res: pd.DataFrame, df_hist: pd.DataFrame):
     render_kpi(df_res, df_hist)
     # 🚨 板块异动横幅 + 下载按钮 工具行
     _render_anomaly_banner(df_res, df_hist)
-    st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(12), unsafe_allow_html=True)
 
     icons = {
         "超强势":   "🟥",

@@ -25,7 +25,7 @@ from lib.strategy_v3 import (
     generate_daily_orders, calc_market_state,
     POOL_TOP_N, BENCHMARK_CODE, POSITION_TABLE,
 )
-from lib.ui_components import kpi_card, metric_row_html
+from lib.ui_components import kpi_card, metric_row_html, height_spacer  # 2026-07-21 δ 靶点
 from html import escape
 
 
@@ -59,7 +59,7 @@ def render_daily_orders(df_res, df_hist):
         return
 
     # 顶部 KPI
-    st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(8), unsafe_allow_html=True)
 
     asof = orders["asof_date"]
     state = orders["market_state"]
@@ -108,7 +108,7 @@ def render_daily_orders(df_res, df_hist):
             color="#f59e0b" if n_cand_total > 0 else TEXT_MUTED,
         ), unsafe_allow_html=True)
 
-    st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(12), unsafe_allow_html=True)
 
     # === 调出 + 调入候选 ===
     col1, col2 = st.columns(2)
@@ -142,7 +142,7 @@ def render_daily_orders(df_res, df_hist):
         else:
             st.markdown(f'<div style="color:{TEXT_DIM};font-size:12px;padding:12px;">无调入候选(已是 Top 30 之外无更优)</div>', unsafe_allow_html=True)
 
-    st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(8), unsafe_allow_html=True)
 
     # === Top 30 完整持仓 ===
     st.markdown(f"""
@@ -245,7 +245,7 @@ def render_backtest(df_res, df_hist):
     trades = result.trades
 
     # === 顶部 KPI ===
-    st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(8), unsafe_allow_html=True)
     final_eq = stats["final_equity"]
     cagr = stats["cagr_pct"]
     mdd = stats["max_drawdown_pct"]
@@ -282,7 +282,7 @@ def render_backtest(df_res, df_hist):
             color=ACCENT_UP if alpha > 0 else ACCENT_DN,
         ), unsafe_allow_html=True)
 
-    st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(8), unsafe_allow_html=True)
 
     # === 净值曲线 ===
     if not eq.empty:
@@ -401,7 +401,7 @@ def render_factor_analysis(df_res, df_hist):
         st.error(f"数据加载失败: {orders.get('error')}")
         return
 
-    st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(8), unsafe_allow_html=True)
 
     # 复算完整打分(为了展示见底加成)
     bench_closes = benchmark["close"].astype(float).values
@@ -455,7 +455,7 @@ def render_factor_analysis(df_res, df_hist):
             import streamlit.components.v1 as components
             components.html(chart_html, height=240)
 
-    st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(8), unsafe_allow_html=True)
 
     # 见底加成股
     st.markdown(f"""

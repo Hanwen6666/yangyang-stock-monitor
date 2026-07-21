@@ -19,6 +19,8 @@ import time
 
 # 把当前目录加进 path,这样 tabs/ 能 import
 sys.path.insert(0, str(Path(__file__).parent))
+from lib.ui_components import height_spacer  # 2026-07-21 δ 靶点: unsafe_allow_html 切组件化
+
 from lib.constants import (  # noqa: E402
     BG, BG_PANEL, BG_PANEL_HI, BORDER, BORDER_HI,
     TEXT, TEXT_MUTED, TEXT_DIM, ACCENT_UP, ACCENT_DN,
@@ -501,7 +503,7 @@ def main():
     _render_empty_state_banner(df_res, is_empty)
     render_header(df_res if not is_empty else pd.DataFrame(), st.session_state.refresh_state)
     df_res, df_hist = _handle_refresh_button(df_res, df_hist)
-    st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
+    st.markdown(height_spacer(12), unsafe_allow_html=True)
     _render_status_strip(df_res, df_hist)
     render_all_tabs(df_res, df_hist)
     st.markdown(f"""
