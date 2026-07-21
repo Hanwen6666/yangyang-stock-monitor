@@ -22,7 +22,8 @@ from lib.constants import (  # noqa: E402
     CHART_KLINE_HEIGHT,
     CACHE_TTL_ETF_LIST, CACHE_TTL_RECOMPUTE,  # 2026-07-20 重构: TTL 统一
 )
-from lib import algorithm as algo
+from lib import algorithm as algo  # 仅 calc_single_etf 仍留 lib.algorithm
+from lib import market_data as md  # 2026-07-21 E3 迁移: fetcher 迁到 lib.market_data
 from lib.chart_kline import _kline_chart_html
 from lib.ui_components import (
     label_badge_html, kpi_card, metric_row_html,
@@ -36,19 +37,19 @@ from lib.ui_components import (
 def _cached_fetch_kline(code: str, min_len: int):
     """缓存 K 线数据(优先腾讯快照,更稳定),避免跨 tab 切换重复拉取卡死"""
     try:
-        k = algo.fetch_kline_tencent(code)
+        k = md.fetch_kline_tencent(code)
         if k is not None and len(k) >= 120:
             return k
     except Exception:
         pass
-    k = algo.fetch_kline(code, min_len)
+    k = md.fetch_kline(code, min_len)
     return k
 
 
 @st.cache_data(ttl=CACHE_TTL_ETF_LIST, show_spinner=False)
 def _cached_fetch_amount(code: str):
     """成交额缓存,避免每次进入个股分析重复拉取"""
-    return algo.fetch_amount(code)
+    return md.fetch_amount(code)
 
 
 @st.cache_data(ttl=CACHE_TTL_ETF_LIST, show_spinner=False)
