@@ -319,24 +319,25 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
 # ============================================================
 # 主流程
 # ============================================================
-def main():
-    # Session state
+def _init_session_state():
+    """2026-07-21 η 靶点: 初始化 main 所需的 session_state
+
+    独立 helper, 保证 main() 入口 不再携带隐性状态副作用。
+    """
     if "refresh_state" not in st.session_state:
         st.session_state.refresh_state = None  # 上次刷新状态 dict
+    if "_refreshing" not in st.session_state:
+        st.session_state._refreshing = False
 
-    # 顶部 header + 刷新按钮 并排
-    # 这里只调一次 render_header 即可,刷新按钮接在 header 后面
+
+def _load_data_with_seed_fallback():
+    """2026-07-21 η 靶点: 加载 results + history, 缺失时回退到仓库内的 seed CSV
+
+    Returns:
+        (df_res, df_hist, is_empty)
+    """
     df_res = load_results()
     df_hist = load_history()
-
-    # 诊断提示：如果表格里最新价/成交额列全为 0 · 说明加载的是 seed 旧数据
-    _can_show_anomaly = (
-        "latest_close" in df_res.columns and "latest_amount" in df_res.columns
-    ) and (
-        df_res["latest_amount"].fillna(0).gt(0).any()
-    )
-
-    # Fallback: 启动时 CSV 缺失 → 用仓库中的 seed CSV
     if df_res.empty or df_hist.empty:
         import shutil
         for src_name, dst_name in [
@@ -347,23 +348,19 @@ def main():
             dst = DATA_DIR / dst_name
             if src.exists() and not dst.exists():
                 shutil.copy(src, dst)
-        # 重读
         load_results.clear()
         load_history.clear()
         df_res = load_results()
         df_hist = load_history()
+    return df_res, df_hist, df_res.empty
 
-    is_empty = df_res.empty
 
-    # Fallback 后数据可能为 0(老 seed)——提示用户点刷新拉真数据
-    if not is_empty and not _can_show_anomaly:
-        st.info(
-            "📦 当前是仓库内置的 **seed 数据快照**，最新价 / 成交额列均为 0。"
-            "请点上方 **「🔄 数据刷新」** 拉取今日真实数据。",
-            icon="⚠️",
-        )
+def _render_empty_state_banner(df_res: pd.DataFrame, is_empty: bool):
+    """2026-07-21 η 靶点: 渲染 seed/empty 状态横幅提示
+
+    区分三种状态: 1) 数据全空 → 首次启动提示 2) seed 快照 → 提示拉真数据 3) 正常 → 不动
+    """
     if is_empty:
-        # 首次启动 — 只显示提示,不自动调 API 防夸
         st.markdown(
             '<div style="background:#1a1f2e;border:1px solid #f59e0b;'
             'border-radius:8px;padding:20px;text-align:center;margin:24px 0;">'
@@ -374,13 +371,27 @@ def main():
             '</div></div>',
             unsafe_allow_html=True,
         )
+        return
+    # Fallback 后数据可能为 0(老 seed)——提示用户点刷新拉真数据
+    _can_show_anomaly = (
+        "latest_close" in df_res.columns and "latest_amount" in df_res.columns
+    ) and (
+        df_res["latest_amount"].fillna(0).gt(0).any()
+    )
+    if not _can_show_anomaly:
+        st.info(
+            "📦 当前是仓库内置的 **seed 数据快照**，最新价 / 成交额列均为 0。"
+            "请点上方 **「🔄 数据刷新」** 拉取今日真实数据。",
+            icon="⚠️",
+        )
 
-    # 渲染 header
-    render_header(df_res if not is_empty else pd.DataFrame(), st.session_state.refresh_state)
 
-    # 单按钮: 先快速拉 API (4-6s) → 页面可用数据 → 后台异步跑 v27 重算
-    if "_refreshing" not in st.session_state:
-        st.session_state._refreshing = False
+def _handle_refresh_button(df_res, df_hist):
+    """2026-07-21 η 靶点: 渲染刷新按钮 + 处理点击 + 后台重算检查
+
+    原 main() L377-491 (~115L) 抽出的刷新按钮 + 进度条 + 后台重算检查。
+    返回更新后的 (df_res, df_hist) 以供后续 status_strip / tabs 使用。
+    """
     btn_col, info_col = st.columns([1, 9])
     with btn_col:
         clicked = st.button(
@@ -477,17 +488,22 @@ def main():
                 st.session_state.pop("_recompute_loaded", None)
         else:
             st.session_state.pop("_recompute_loaded", None)
+    return df_res, df_hist
 
+
+def main():
+    """主入口调度器 (2026-07-21 η 靶点: 176L → 30L)
+
+    六步调度: init → load → banner → header → refresh → status → tabs → footer
+    """
+    _init_session_state()
+    df_res, df_hist, is_empty = _load_data_with_seed_fallback()
+    _render_empty_state_banner(df_res, is_empty)
+    render_header(df_res if not is_empty else pd.DataFrame(), st.session_state.refresh_state)
+    df_res, df_hist = _handle_refresh_button(df_res, df_hist)
     st.markdown(f'<div style="height:12px"></div>', unsafe_allow_html=True)
-
-    # 顶部小 KPI 实时状态条 (下次自动刷新倒计时 + 趋势最新 + 数据完整度)
     _render_status_strip(df_res, df_hist)
-
-    # 路由所有 Tab
-    # 各 Tab 内部决定是否要展示自己的 KPI(例如 ETF 强弱 Tab 会在内部显示标的池/趋势分布)
     render_all_tabs(df_res, df_hist)
-
-
     st.markdown(f"""
     <div style="margin-top:32px;padding-top:12px;border-top:1px solid {BORDER};
                 color:{TEXT_DIM};font-size:10px;text-align:center;
