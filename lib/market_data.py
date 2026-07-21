@@ -228,45 +228,53 @@ def fetch_kline_tencent(code6):
 def _parse_amount_from_text(text: str):
     """腾讯快照 v_sh600519="1~贵州..." 解析成交额
 
-    腾讯快照实际格式: v_sh600519="1~名字~code~今开~昨收~成交额~..."
-    split 后索引:
-      [0] v_sh600519="1
-      [1] 名字
-      [2] code
-      [3] 今开
-      [4] 昨收
-      [5] 成交额 (元)  ← 我们要这个
-      [6]+ 后续字段
+    腾讯快照实际格式 (实测 2026-07-21 88 段) :
+      [0]  v_sh600519="1
+      [1]  名字
+      [2]  code
+      [3]  今开
+      [4]  昨收
+      [5]  当前价 (元) ← 不要拿这个,这个是价格不是成交额
+      [6]  累计成交量 (手)
+      ...
+      [37] 成交额 (万元)
+      [57] 成交额 (万元, 更精确)
+      [72] 成交额 (元)
 
-    2026-07-21 修复: 原 lib/algorithm.py 实现用 `/` 分隔正则,
-    但腾讯快照实际用 `~`,导致永远返回 None,fetch_amount() 永远拿不到数据。
-    修复:优先 parts[5],不合法时退化到旧 `/` 分隔正则(兼容历史数据)。
+    2026-07-21 v2 修复: 上一版用 parts[5] (当前价), 错了!
+      原 lib/algorithm.py 实现用 / 分隔正则 — 永远 None
+      v1 修复用 parts[5] — 拿到的是当前价不是成交额
+      v2 修复: 正确字段是 parts[37] (万元, 跨品种冗余) → 转元
 
     返回成交额 (元),为 0 时返回 None (停牌/未开盘)。
     """
     if not text or '~' not in text:
         return None
     parts = text.split('~')
-    if len(parts) >= 6:
-        try:
-            amount = float(parts[5])
-            if amount > 0:
-                return amount
-            # 成交额 = 0 是停牌/未开盘,返回 None
-            return None
-        except (ValueError, IndexError):
-            # parts[5] 不是数字,尝试退化路径
-            pass
-    # 退化: 保留旧 `/` 分隔匹配 (兼容历史数据)
+    # 优先取 parts[37] (成交额万元) × 1e4 = 元
+    for idx in (37, 57, 72):
+        if len(parts) > idx:
+            try:
+                v = float(parts[idx])
+                if v > 0:
+                    # parts[37] / parts[57] 是万元, 需 × 1e4 转元
+                    # parts[72] 已经是元, 不用转
+                    if idx in (37, 57):
+                        return v * 1e4
+                    return v
+            except (ValueError, IndexError):
+                continue
+    # 退化: 保留旧 `/` 分隔匹配 (兼容历史数据, parts[37] 这种精确路径)
     import re as _re
     m = _re.search(r'~([\d.]+)/([\d.]+)/([\d.]+)~', text)
-    if not m:
-        return None
-    try:
-        amount = float(m.group(3))
-    except (ValueError, IndexError):
-        return None
-    return amount if amount > 0 else None
+    if m:
+        try:
+            amount = float(m.group(3))
+            if amount > 0:
+                return amount * 1e4  # 万元 → 元
+        except (ValueError, IndexError):
+            pass
+    return None
 
 
 def fetch_amount(code6):
