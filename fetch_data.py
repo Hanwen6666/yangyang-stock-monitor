@@ -109,7 +109,8 @@ def _load_kline_cache_for_trend():
     import pickle
     from datetime import date as _date_cls
     sys.path.insert(0, str(Path(__file__).parent))
-    from lib import algorithm as _algo
+    from lib import algorithm as _algo  # _compute_sliding_labels 仍留 lib.algorithm
+    from lib import market_data as _md  # 2026-07-21 E4 迁移: fetcher 走 market_data
     from lib.safe_io import exclusive_lock, atomic_write_pickle
 
     cache_dir = DATA_DIR / ".kline_cache"
@@ -139,7 +140,7 @@ def _load_kline_cache_for_trend():
             if to_fetch:
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 with ThreadPoolExecutor(max_workers=10) as pool:
-                    fut_map = {pool.submit(_algo.fetch_kline, c, 250): c for c in to_fetch}
+                    fut_map = {pool.submit(_md.fetch_kline, c, 250): c for c in to_fetch}
                     for fut in as_completed(fut_map):
                         code = fut_map[fut]
                         try:
@@ -252,19 +253,20 @@ def _batch_fetch_latest_from_tencent(codes: list, max_workers=10):
     修复: 旧实现按 fields 位置(fields[35] / fields[3])解析,腾讯跨品种(尤其债券/跨境 ETF)
     字段顺序不一致,会把昨收/价格当成成交额。新实现:
       - 最新价: 走腾讯快照 fields[3] (稳定)
-      - 成交额: 复用 lib.algorithm.fetch_amount 的正则解析(跨品种鲁棒,且自带 sh/sz 双前缀兜底)
+      - 成交额: 复用 lib.market_data.fetch_amount 的正则解析(跨品种鲁棒,且自带 sh/sz 双前缀兜底)
     """
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).parent))
-    from lib.algorithm import tencent_market_prefix, _parse_amount_from_text
+    # 2026-07-21 E4 迁移: fetcher 走 lib.market_data (单点权威)
+    from lib.market_data import tencent_market_prefix, _parse_amount_from_text
     # 复用模块级 _SESSION(共享 TCP 连接),保证并发时连接池不爆
-    from lib.algorithm import _SESSION as _algo_session
+    from lib.market_data import _SESSION as _md_session
 
     def _fetch_one(code):
         prefix = tencent_market_prefix(code)
         url = f"https://web.sqt.gtimg.cn/q={prefix}{code}"
         try:
-            raw = _algo_session.get(url, timeout=5)
+            raw = _md_session.get(url, timeout=5)
             if raw.status_code != 200:
                 return code, (None, None)
             text = raw.text
@@ -284,7 +286,7 @@ def _batch_fetch_latest_from_tencent(codes: list, max_workers=10):
             if amount_val is None:
                 alt = "sz" if prefix == "sh" else "sh"
                 try:
-                    raw2 = _algo_session.get(f"https://web.sqt.gtimg.cn/q={alt}{code}", timeout=5)
+                    raw2 = _md_session.get(f"https://web.sqt.gtimg.cn/q={alt}{code}", timeout=5)
                     if raw2.status_code == 200:
                         amount_val = _parse_amount_from_text(raw2.text)
                 except Exception:
@@ -376,8 +378,9 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
         # 用腾讯源 K 线确认实际最新日期,避免 API 滞后
         try:
             sys.path.insert(0, str(Path(__file__).parent))
-            from lib import algorithm as algo_fix
-            _k = algo_fix.fetch_kline_tencent("510300")
+            # 2026-07-21 E4 迁移: 用 lib.market_data (fetcher 单点权威)
+            from lib import market_data as md_fix
+            _k = md_fix.fetch_kline_tencent("510300")
             if _k is not None:
                 _latest = _k["date"].iloc[-1]
                 _ds = _latest if isinstance(_latest, str) else _latest.strftime("%Y%m%d")
@@ -476,7 +479,7 @@ def _fetch_klines_with_cache(codes, total, progress_cb):
 
             # 并行拉 K 线(IO 密集,多线程加速)
             with ThreadPoolExecutor(max_workers=10) as pool:
-                fut_map = {pool.submit(algo.fetch_kline, code, 250): code for code in to_fetch}
+                fut_map = {pool.submit(md.fetch_kline, code, 250): code for code in to_fetch}
                 for i, fut in enumerate(as_completed(fut_map)):
                     code = fut_map[fut]
                     try:
@@ -548,7 +551,7 @@ def _build_metric_row(code, kw, m):
         change_pct = float((close[-1] - close[-2]) / close[-2] * 100)
     else:
         change_pct = 0.0
-    latest_amount = algo.fetch_amount(code)
+    latest_amount = md.fetch_amount(code)
     return {"code": code, **m,
             "latest_close": float(latest_close),
             "latest_volume": float(latest_volume),
@@ -650,7 +653,9 @@ def recompute_locally(codes=None, progress_cb=None):
     """
     import pandas as pd
     sys.path.insert(0, str(Path(__file__).parent))
+    # 2026-07-21 E4 迁移: fetcher 走 lib.market_data, 算法仍走 lib.algorithm
     from lib import algorithm as algo
+    from lib import market_data as md
 
     t0 = datetime.now()
     try:
