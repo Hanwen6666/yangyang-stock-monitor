@@ -419,10 +419,18 @@ def refresh_data(base_url=DEFAULT_BASE, timeout=20):
                 "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
                 "error": None, "mode": "api"}
     except Exception as e:
-        return {"ok": False, "error": str(e), "fetched_at": datetime.now().isoformat(timespec="seconds"),
-                "asof_date": None, "n_etfs": 0, "n_points": 0,
-                "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
-                "mode": "api"}
+        # 2026-07-22 路 A: CloudBase hang/失败时自动 fallback 到 recompute_locally()
+        # 让本地版完全不依赖外部 CloudBase(健康时仍走 api 快路径)
+        _err = str(e)
+        print(f"[refresh_data] CloudBase 失败 → 自动 fallback 到 local: {_err}", file=sys.stderr)
+        try:
+            return recompute_locally()
+        except Exception as e2:
+            return {"ok": False, "error": f"api+local 都失败: api={_err}, local={e2}",
+                    "fetched_at": datetime.now().isoformat(timespec="seconds"),
+                    "asof_date": None, "n_etfs": 0, "n_points": 0,
+                    "elapsed_ms": int((datetime.now() - t0).total_seconds() * 1000),
+                    "mode": "api+local-failed"}
 
 
 
@@ -722,15 +730,36 @@ def _check_cloudbase_health(timeout=3):
 
 
 def main():
+    """CLI 入口
+
+    2026-07-22 路 A: refresh_data() CloudBase hang 时自动 fallback 到 recompute_locally()
+    让本地版完全不依赖外部 CloudBase(健康时仍走 CloudBase 快路径)
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--base", default=DEFAULT_BASE)
-    p.add_argument("--mode", choices=["api", "local"], default="api",
-                   help="api=从 CloudBase 拉(快), local=v27 本地重算(慢)")
+    p.add_argument("--mode", choices=["api", "local", "auto"], default="auto",
+                   help="api=从 CloudBase 拉(快), local=v27 本地重算(慢), auto=CloudBase 失败时 fallback 到 local")
+    p.add_argument("--fallback", action="store_true",
+                   help="强制启用 fallback(用于 cron 场景)")
     args = p.parse_args()
-    if args.mode == "api":
-        res = refresh_data(args.base)
-    else:
+
+    if args.mode == "local":
         res = recompute_locally()
+    elif args.mode == "api":
+        res = refresh_data(args.base)
+    else:  # auto
+        # 2026-07-22 路 A: CloudBase 健康探测 → hang 时自动 fallback
+        health = _check_cloudbase_health(timeout=3)
+        if health["ok"]:
+            res = refresh_data(args.base)
+            if not res["ok"] and args.fallback:
+                # 探测 ok 但 refresh 失败(罕见),fallback
+                print(f"[main] CloudBase refresh fail → fallback to local: {res.get('error')}", file=sys.stderr)
+                res = recompute_locally()
+        else:
+            print(f"[main] CloudBase 不可达({health['error']}) → 自动 fallback 到 local", file=sys.stderr)
+            res = recompute_locally()
+
     if res["ok"]:
         print(f"✅ mode={res['mode']} · {res['n_etfs']} ETFs · {res['elapsed_ms']}ms")
     else:
