@@ -183,11 +183,18 @@ def _render_etf_table_html(show: pd.DataFrame, uid: int) -> None:
 
 
 def _render_etf_table_interactivity(uid: int) -> None:
-    """2026-07-21 ζ 靶点: 渲染客户端 JS 排序/过滤脚本 + CSS 样式 (约 200L)
+    """ETF 表格客户端交互 (2026-07-22 P1 拆解): 175L → 调度器 + 2 子函数
 
-    视图层第二步:把过滤/排序交互逻辑下沉到客户端,避免后端 round-trip。
+      1. _build_etf_table_js(uid): 客户端排序/过滤 JS
+      2. _build_etf_table_css(): 表格 + 滚动条 + hover + 骨架 CSS
     """
-    st.markdown(f"""
+    st.markdown(_build_etf_table_js(uid), unsafe_allow_html=True)
+    st.markdown(_build_etf_table_css(), unsafe_allow_html=True)
+
+
+def _build_etf_table_js(uid: int) -> str:
+    r"""构建 ETF 表格客户端 JS — 搜索过滤 + 表头排序"""
+    return rf"""
     <script>
     (function(){{
       var uid = '{uid}';
@@ -237,9 +244,9 @@ def _render_etf_table_interactivity(uid: int) -> None:
             rowsArr.sort(function(a,b){{
               var av = a.children[idx].textContent.trim();
               var bv = b.children[idx].textContent.trim();
-              var an = parseFloat(av.replace(/[^\\d.\\-]/g, ''));
-              var bn = parseFloat(bv.replace(/[^\\d.\\-]/g, ''));
-              var isNum = !isNaN(an) && !isNaN(bn) && /[\\d.]/.test(av) && /[\\d.]/.test(bv);
+              var an = parseFloat(av.replace(/[^\d.\-]/g, ''));
+              var bn = parseFloat(bv.replace(/[^\d.\-]/g, ''));
+              var isNum = !isNaN(an) && !isNaN(bn) && /[\d.]/.test(av) && /[\d.]/.test(bv);
               if (isNum) return dir === 'asc' ? an - bn : bn - an;
               return dir === 'asc' ? av.localeCompare(bv, 'zh-CN') : bv.localeCompare(av, 'zh-CN');
             }});
@@ -256,8 +263,12 @@ def _render_etf_table_interactivity(uid: int) -> None:
       rows.forEach(function(r,i){{ r.dataset.origIdx = i; }});
     }})();
     </script>
-    """, unsafe_allow_html=True)
-    st.markdown(f"""
+    """
+
+
+def _build_etf_table_css() -> str:
+    """构建 ETF 表格 CSS — 表格 + 滚动条 + hover + 骨架动画"""
+    return f"""
     <style>
       .etf-table-wrap {{
         max-height: 560px; overflow-y: auto; overflow-x: auto;
@@ -354,9 +365,7 @@ def _render_etf_table_interactivity(uid: int) -> None:
       .skeleton-bar.short {{ width: 60%; }}
       .skeleton-bar.medium {{ width: 80%; }}
     </style>
-    """, unsafe_allow_html=True)
-
-
+    """
 def render_table(df: pd.DataFrame):
     """ETF 列表表格 (2026-07-21 ζ 靶点: 234L → 调度器 + 3 个 _xxx 子函数)
 
