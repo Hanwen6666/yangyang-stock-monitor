@@ -59,7 +59,10 @@ st.markdown(
 st.markdown(f"""
 <style>
   .stApp {{ background: {BG}; color: {TEXT}; }}
-  [data-testid="stHeader"] {{ background: transparent !important; }}
+  /* 隐藏 streamlit 默认 page header (含 page_title + page_icon),
+     避免与 render_header() 自定义 header 双层并存 (2026-07-23 修复) */
+  [data-testid="stHeader"],
+  [data-testid="stAppHeader"] {{ display: none !important; }}
   [data-testid="stToolbar"] {{ display: none; }}
   #MainMenu {{ visibility: hidden; }}
   footer {{ visibility: hidden; }}
