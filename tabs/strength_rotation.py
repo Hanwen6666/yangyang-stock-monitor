@@ -312,7 +312,25 @@ def render_backtest(df_res, df_hist):
 
 
 def _render_equity_chart(eq, benchmark, start_date, end_date):
-    """净值曲线 — ECharts 渲染(对比创业板指)"""
+    """净值曲线 — ECharts 渲染(对比创业板指)
+
+    调度器 (2026-07-22 P1 拆解): 79L → 3 子函数
+      1. _prepare_equity_data: 归一化 + 对齐 + 截断
+      2. _build_equity_chart_echarts: 构建 ECharts HTML/JS 字符串
+      3. streamlit.components.v1.html: 渲染嵌入
+    """
+    merged = _prepare_equity_data(eq, benchmark, start_date, end_date)
+    html = _build_equity_chart_echarts(merged)
+    import streamlit.components.v1 as components
+    components.html(html, height=400)
+
+
+def _prepare_equity_data(eq, benchmark, start_date, end_date, max_points=200):
+    """准备净值曲线数据 — 归一化 + 对齐 + 截断
+
+    Returns:
+        merged: DataFrame with columns [date, equity, benchmark], 已按 date 排序、ffill 填充
+    """
     eq = eq.copy()
     eq["date"] = eq["date"].astype(str)
 
@@ -330,20 +348,15 @@ def _render_equity_chart(eq, benchmark, start_date, end_date):
     merged = eq[["date", "equity"]].merge(bench_aligned, on="date", how="outer").sort_values("date")
     merged = merged.fillna(method="ffill").dropna()
 
-    # 取最近 60 个点画图(防止太长)
-    if len(merged) > 200:
-        merged = merged.tail(200)
+    # 取最近 N 个点画图(防止太长)
+    if len(merged) > max_points:
+        merged = merged.tail(max_points)
 
-    # 状态着色背景
-    if not eq.empty:
-        states = []
-        for _, r in eq.iterrows():
-            color = {
-                "强势": "#ff4d4f22", "阶段底": "#f59e0b22",
-                "横盘": "#7a7f9622", "弱势": "#22c55e22",
-            }.get(r["market_state"], "#7a7f9611")
-            states.append({"date": r["date"], "state": r["market_state"], "color": color})
+    return merged
 
+
+def _build_equity_chart_echarts(merged):
+    """构建 ECharts HTML/JS 字符串 — 净值 vs 创业板指对比"""
     dates_js = "[" + ",".join(f'"{d}"' for d in merged["date"]) + "]"
     eq_js = "[" + ",".join(f"{v:.4f}" for v in merged["equity"]) + "]"
     bench_js = "[" + ",".join(f"{v:.4f}" for v in merged["benchmark"]) + "]"
@@ -383,13 +396,7 @@ def _render_equity_chart(eq, benchmark, start_date, end_date):
     window.addEventListener('resize', function() {{ chart.resize(); }});
     </script>
     """
-    import streamlit.components.v1 as components
-    components.html(html, height=400)
-
-
-# ============================================================
-# 子视图 3: 因子分析
-# ============================================================
+    return html
 def render_factor_analysis(df_res, df_hist):
     pool, name_map = _load_pool_and_names()
 
