@@ -188,17 +188,27 @@ def check_data_files() -> dict:
 
 
 def check_cloudbase_api() -> dict:
-    """检查 CloudBase API 连通性（带缓存 + 短超时）"""
+    """检查 CloudBase API 连通性（带缓存 + 短超时）
+
+    2026-07-22 完美优化 (C 动作):
+      - HEAD timeout 5s → 2s (CloudBase hang 时不再等 5s)
+      - Fail 场景 cache TTL 30s → 300s (避免每次请求重试 fail)
+      - Ok 场景 cache TTL 仍 30s (频繁确认可用性)
+    """
     cache_key = "cloudbase"
     cached = _CHECK_CACHE.get(cache_key)
-    if cached and (time.time() - cached["at"]) < _CHECK_CACHE["ttl"]:
-        return cached["result"]
+    if cached:
+        is_fail = cached["result"].get("status") == "fail"
+        cache_ttl = 300 if is_fail else _CHECK_CACHE["ttl"]  # fail 长缓存, ok 短缓存
+        if (time.time() - cached["at"]) < cache_ttl:
+            return cached["result"]
 
     try:
         import requests
         url = "https://agentchat-d0gsw7sn6c36f0b00.service.tcloudbase.com/api/etf-strength"
         # HEAD 请求只拿响应头，不下载完整 body
-        resp = requests.head(url, timeout=5, allow_redirects=True)
+        # 2026-07-22 优化: timeout 5s → 2s (客户端默认 3s timeout 兼容)
+        resp = requests.head(url, timeout=2, allow_redirects=True)
 
         result = {
             "status": "ok" if resp.status_code < 400 else "warn",
@@ -212,7 +222,7 @@ def check_cloudbase_api() -> dict:
     except requests.Timeout:
         result = {
             "status": "fail",
-            "error": "请求超时 (5s)",
+            "error": "请求超时 (2s)",  # 2026-07-22 同步 timeout 文案
             "url": "https://agentchat-d0gsw7sn6c36f0b00.service.tcloudbase.com",
         }
     except Exception as e:
