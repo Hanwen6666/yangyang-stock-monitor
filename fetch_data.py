@@ -449,7 +449,10 @@ def _fetch_klines_with_cache(codes, total, progress_cb):
 
     Returns:
         kline_cache: dict[code, DataFrame]
+
+    2026-07-22 修复: 函数体内 import lib.market_data as md (E4 迁移遗漏 → md 未定义 NameError)
     """
+    from lib import market_data as md
     import pickle
     from datetime import date as _date_cls
     from lib.safe_io import exclusive_lock, atomic_write_pickle
@@ -543,7 +546,10 @@ def _build_metric_row(code, kw, m):
 
     Returns:
         dict — 单只 ETF 的 results.csv 行
+
+    2026-07-22 修复: 函数体内 import lib.market_data as md (E4 迁移遗漏 → md 未定义 NameError)
     """
+    from lib import market_data as md
     close = kw["close"].astype(float).values
     latest_close = close[-1] if len(close) > 0 else 0.0
     latest_volume = kw["volume"].astype(float).values[-1] if "volume" in kw.columns and len(kw) > 0 else 0.0
@@ -564,7 +570,10 @@ def _compute_metrics_and_history(codes, kline_cache, name_map, hist_dates, progr
 
     Returns:
         (metrics_rows, hist_rows) — 都是 list[dict]
+
+    2026-07-22 修复: 函数体内 import lib.algorithm as algo (E5 迁移遗漏 → algo 未定义 NameError)
     """
+    from lib import algorithm as algo
     metrics_rows = []
     hist_rows = []
     done = 0
