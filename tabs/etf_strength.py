@@ -958,8 +958,11 @@ def _render_stock_search_bar(search_items: list) -> tuple:
     with c1:
         _cur_label = st.session_state.stock_detail_selected
         _cur_idx = search_items.index(_cur_label) if _cur_label in search_items else None
+        # 2026-07-22 修复: 原 label="" 触发 streamlit deprecation warning
+        # (`label` got an empty value. ... may be disallowed in the future by raising an exception)
+        # 改 label_visibility="collapsed" 让用户看不到 label 但 streamlit 不警告
         selected = st.selectbox(
-            "", search_items,
+            "搜索代码或名称", search_items,
             index=_cur_idx,
             placeholder="输入代码或中文名称搜索...",
             label_visibility="collapsed",
