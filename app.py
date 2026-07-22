@@ -358,44 +358,25 @@ def _load_data_with_seed_fallback():
 
 
 def _render_cloudbase_status_banner():
-    """2026-07-21 A2: 在 main() 顶部渲染 CloudBase API 状态 banner
+    """CloudBase 状态 banner (现已禁用)
 
-    2026-07-22 路 B: CloudBase 不可达时改为"已自动 fallback"提示
-    (refresh_data 失败时会自动 fallback 到 recompute_locally 本地计算,
-     数据流不再阻塞;banner 改为透明告知而非红色警示)
+    2026-07-21 A2: 原始实现 - CloudBase 不可达时显示黄色警示
+    2026-07-22 路 B: 改为蓝色 "已自动 fallback" 透明告知
+    2026-07-22 23:25 路 C: 老大拍板完全隐藏 - 本地版已 0 依赖 CloudBase
+      (refresh_data 失败自动 fallback 到 recompute_locally 本地计算,
+       数据流完全不阻塞),banner 失去感知价值 → 不渲染任何 banner
 
-    逻辑:
-      - 调用 _check_cloudbase_health(3s) 速断 health
-      - health=ok: 不渲染 banner,返回 True
-      - health=fail: 渲染蓝色 info banner("已自动 fallback")而非黄色警示
-        让老大知道 CloudBase 服务方问题但不误判为业务故障
+    健康探测仍保留在 st.session_state.cloudbase_health 供未来扩展,
+    但 UI 层不渲染 banner。
+
     Returns:
-        bool - cloudbase_ok
+        bool - cloudbase_ok (供历史调用方判断,实际不再使用)
     """
-    from lib.ui_components import bordered_info_box_html
-    asof_path = FETCH_DATA_DIR / ".asof"
-    last_data_date = asof_path.read_text(encoding="utf-8").strip() if asof_path.exists() else "未知"
     health = _check_cloudbase_health(timeout=3)
     st.session_state.cloudbase_health = health
     if health["ok"]:
         return True
-    # CloudBase 不可达 → 蓝色 info banner (透明告知,不误导)
-    last_success_path = Path("/home/ubuntu/.openclaw/workspace/scripts/market_strength/data/.last_success")
-    last_success_str = "未知"
-    if last_success_path.exists():
-        try:
-            import json as _json
-            d = _json.loads(last_success_path.read_text(encoding="utf-8"))
-            last_success_str = d.get("ts", "未知")
-        except Exception:
-            pass
-    html = bordered_info_box_html(
-        "ℹ️ 已自动 fallback 到本地计算",
-        f"CloudBase API 不可达({health['error']}),本地版已自动 fallback 到本地 K 线计算,数据正常 · 数据停留 {last_data_date} · 上次成功 {last_success_str}",
-        border_color="#60a5fa",  # 蓝色而非黄色
-        bg_color="#1a1f2e",
-    )
-    st.markdown(html, unsafe_allow_html=True)
+    # CloudBase 不可达 → 不渲染 banner (路 C: 完全隐藏)
     return False
 
 
