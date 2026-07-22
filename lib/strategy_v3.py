@@ -1063,30 +1063,13 @@ def fetch_market_klines(force: bool = False, n_days: int = 0,
 # ============================================================
 # 下一交易日调仓清单
 # ============================================================
-def generate_daily_orders(
-    klines: dict, benchmark: pd.DataFrame, name_map: dict,
-    asof_date: str | None = None,
-) -> dict:
-    """生成"今日应执行的调仓清单"(对应说明书 §7.1)
-
-    流程:
-      1. 取 asof_date 当日所有股票 α, 算截面 score
-      2. 检查当前虚拟持仓, 看是否有触发退出条件的
-      3. 从候选 Top 30 中选未持仓的, 补到 30 只
-      4. 输出: 卖出清单 + 买入清单
-    """
-    if benchmark is None or len(benchmark) < 250:
-        return {"ok": False, "error": "无大盘数据"}
-
+def _resolve_asof_date(klines, benchmark, asof_date):
+    """解析 asof_date: p90 算法 + benchmark 兜底"""
     bench_dates = benchmark["date"].astype(str).values
     bench_closes = benchmark["close"].astype(float).values
+
     if asof_date is None:
         # [FIX] Bug #3 - asof date was 21 days stale due to min() bug
-        # Original: used min(all_stock_last_dates) - this gets the bottleneck date,
-        #           easily stuck on a stale/suspended stock
-        # New: use 90th percentile of stock last dates (ignore bottom 10% stale stocks),
-        #      but never later than benchmark's last trading day.
-        # Fallback chain: p90 of stocks -> benchmark last day
         from datetime import datetime as _dt
         stock_last_dates = []
         for code, kl in klines.items():
@@ -1100,13 +1083,13 @@ def generate_daily_orders(
         bench_last = _dt.strptime(str(bench_dates[-1]), "%Y-%m-%d")
         if stock_last_dates:
             stock_last_dates.sort()
-            # 90th percentile
             idx = int(len(stock_last_dates) * 0.9)
             idx = min(idx, len(stock_last_dates) - 1)
             p90 = stock_last_dates[idx]
             asof_date = min(p90, bench_last).strftime("%Y-%m-%d")
         else:
             asof_date = str(bench_dates[-1])
+
     # 找 asof_date 对应的大盘索引
     asof_idx = None
     for i, d in enumerate(bench_dates):
@@ -1114,24 +1097,19 @@ def generate_daily_orders(
             asof_idx = i
             break
     if asof_idx is None:
-        # asof 在 399006 里有,但 399006 可能多 1-2 天 → 取 ≤asof 的最后一天
         for i in range(len(bench_dates) - 1, -1, -1):
             if bench_dates[i] <= asof_date:
                 asof_idx = i
                 break
     if asof_idx is None or asof_idx < 250:
-        return {"ok": False, "error": f"找不到 asof_date={asof_date} (仅 399006 有 {len(bench_dates)} 天)"}
+        return None, None, None, f"找不到 asof_date={asof_date} (仅 399006 有 {len(bench_dates)} 天)"
 
     bench_so_far = bench_closes[: asof_idx + 1]
+    return asof_date, asof_idx, bench_so_far, None
 
-    # 大盘状态
-    market_states = calc_market_state(benchmark)
-    market_state = market_states[asof_idx].state if asof_idx < len(market_states) else "横盘"
-    position_pct = POSITION_TABLE.get(market_state, 0.6)
-    ma20 = market_states[asof_idx].ma20 if asof_idx < len(market_states) else 0
-    ma20_slope = market_states[asof_idx].ma20_slope if asof_idx < len(market_states) else 0
 
-    # 算当日所有股票
+def _compute_cross_section_scores(klines, name_map, asof_date, bench_so_far, market_state):
+    """算当日所有股票 α + 截面打分"""
     rows = []
     for code, kl in klines.items():
         if kl is None or len(kl) < 200:
@@ -1149,7 +1127,6 @@ def generate_daily_orders(
         cur_close = float(closes[-1])
         cur_high = float(highs[-1])
         early_bot = _is_early_bottom(closes)
-        # 上市天数
         n_listing = pos + 1
         rows.append({
             "code": code, "name": name_map.get(code, code),
@@ -1160,35 +1137,22 @@ def generate_daily_orders(
         })
 
     if not rows:
-        return {"ok": False, "error": "无当日股票数据"}
+        return None
 
     df = pd.DataFrame(rows)
     df_scored = cross_section_score(df, is_bottom_phase=(market_state == "阶段底"))
-    df_scored_indexed = df_scored.set_index("code")
+    return df_scored
 
-    # 候选 Top 30
+
+def _select_top_picks(df_scored, asof_date):
+    """筛选 Top 30 候选"""
     df_candidate = df_scored[df_scored["candidate"]].sort_values("score", ascending=False)
     top_picks = df_candidate.head(POOL_TOP_N)
-    top_codes = set(top_picks["code"].tolist())
+    return top_picks
 
-    # === 上一日的 Top 30 (虚拟持仓) ===
-    # 从 df_scored 里取上一交易日。简单: 用当前日的 score 估算「上日持仓」是上日 Top 30。
-    # 实际: 调用方会传 prev_top_codes。这里默认用今天的 Top 30 作为「最佳估计」。
-    # 高级模式下调用方可以传入 prev_top_codes (从实盘/上次调仓结果传入)。
 
-    # === 检查所有"假设持仓"中的退出条件 ===
-    # 假设: 上一日就持有了「昨日 Top 30」
-    # 由于不传 prev_top_codes, 这里输出完整「可买入 / 可调出」清单,供用户看
-    # 退出条件检查: 仅针对那些「不进今日 Top 30 + 触发了退出」的老股
-    # 简化: 今日 Top 30 - 昨 Top 30 = 需调入; 昨 Top 30 - 今日 Top 30 = 需调出
-    # (真实运行应在 run_backtest 中跟踪上日持仓)
-
-    in_top_today = top_codes
-    # 假设上日 Top 30 = 今日 Top 30(同价同分情况)→ 实际上不作调仓
-    # 为产生「今日操作」,提供「Top 30 详情」+「昨日预测」的对比:
-    # 这里默认 prev_top = 今日 Top 30(无变化) + 顶部 5 名作为「调入候选」
-
-    # 选股清单: 今日 Top 30(保留)
+def _build_order_lists(top_picks, df_candidate, market_state):
+    """构建调仓清单: hold_list / sell_candidates / add_candidates"""
     hold_list = []
     for _, row in top_picks.iterrows():
         hold_list.append({
@@ -1200,12 +1164,12 @@ def generate_daily_orders(
             "alpha_20": round(float(row["alpha_20"]), 2),
         })
 
-    # 调出候选: 今日 Top 30 末 5 名(若分数<门槛,调出)
+    # 调出候选
     bottom5 = top_picks.tail(5)
     sell_candidates = []
     threshold = SCORE_THRESHOLD_BOTTOM if market_state == "阶段底" else SCORE_THRESHOLD
     for _, row in bottom5.iterrows():
-        if row["score"] < threshold + 5:  # 距门槛近的优先调出
+        if row["score"] < threshold + 5:
             sell_candidates.append({
                 "code": row["code"], "name": row["name"],
                 "price": round(float(row["close"]), 3),
@@ -1213,12 +1177,11 @@ def generate_daily_orders(
                 "reason": f"分数{row['score']:.1f}接近门槛{threshold}",
             })
 
-    # [FIX] Bug #4 - add candidates should be strictly stronger than last of Top 30
-    # Before: just head(10) outside top, even same score shows as "stronger than last"
-    # After: only include scores STRICTLY GREATER than Top 30 last place
+    # 调入候选
+    top_codes = set(top_picks["code"].tolist())
     bottom_score = float(top_picks.iloc[-1]["score"]) if len(top_picks) else 0
     add_candidates = (
-        df_candidate[~df_candidate["code"].isin(in_top_today)]
+        df_candidate[~df_candidate["code"].isin(top_codes)]
         .loc[lambda d: d["score"] > bottom_score]
         .head(10)
     )
@@ -1232,7 +1195,54 @@ def generate_daily_orders(
             "reason": f"score={row['score']:.1f} > Top 30 末位 {bottom_score:.1f}",
         })
 
-    # 调仓总结
+    return hold_list, sell_candidates, add_list
+
+
+def generate_daily_orders(
+    klines: dict, benchmark: pd.DataFrame, name_map: dict,
+    asof_date: str | None = None,
+) -> dict:
+    """生成"今日应执行的调仓清单"(对应说明书 §7.1)
+
+    调度器 (2026-07-22 P2 拆解): 100L → 4 子函数
+      1. _resolve_asof_date: p90 算法 + benchmark 兜底
+      2. _compute_cross_section_scores: 当日 α + 截面打分
+      3. _select_top_picks: Top 30 候选筛选
+      4. _build_order_lists: hold_list + sell + add
+
+    流程:
+      1. 取 asof_date 当日所有股票 α, 算截面 score
+      2. 检查当前虚拟持仓, 看是否有触发退出条件的
+      3. 从候选 Top 30 中选未持仓的, 补到 30 只
+      4. 输出: 卖出清单 + 买入清单
+    """
+    if benchmark is None or len(benchmark) < 250:
+        return {"ok": False, "error": "无大盘数据"}
+
+    # 1. asof_date 解析
+    asof_date, asof_idx, bench_so_far, err = _resolve_asof_date(klines, benchmark, asof_date)
+    if err:
+        return {"ok": False, "error": err}
+
+    # 2. 大盘状态
+    market_states = calc_market_state(benchmark)
+    market_state = market_states[asof_idx].state if asof_idx < len(market_states) else "横盘"
+    position_pct = POSITION_TABLE.get(market_state, 0.6)
+    ma20 = market_states[asof_idx].ma20 if asof_idx < len(market_states) else 0
+    ma20_slope = market_states[asof_idx].ma20_slope if asof_idx < len(market_states) else 0
+
+    # 3. 截面打分
+    df_scored = _compute_cross_section_scores(klines, name_map, asof_date, bench_so_far, market_state)
+    if df_scored is None:
+        return {"ok": False, "error": "无当日股票数据"}
+
+    # 4. Top 30 候选
+    top_picks = _select_top_picks(df_scored, asof_date)
+
+    # 5. 构建调仓清单
+    hold_list, sell_candidates, add_list = _build_order_lists(top_picks, df_scored[df_scored["candidate"]], market_state)
+
+    # 6. 调仓总结
     n_buy = len(add_list)
     n_sell = len(sell_candidates)
     summary_msg = "无需调仓"
@@ -1249,9 +1259,9 @@ def generate_daily_orders(
         "n_total": len(df_scored),
         "n_candidates": int(df_scored["candidate"].sum()),
         "summary": summary_msg,
-        "hold_list": hold_list,                # 当前 Top 30(保留)
-        "sell_candidates": sell_candidates,    # 建议调出
-        "add_candidates": add_list,            # 建议调入
+        "hold_list": hold_list,
+        "sell_candidates": sell_candidates,
+        "add_candidates": add_list,
         "top_picks": top_picks[["code", "name", "close", "score", "alpha_5", "alpha_10", "alpha_20"]]
             .to_dict("records"),
     }
