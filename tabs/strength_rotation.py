@@ -346,7 +346,7 @@ def _prepare_equity_data(eq, benchmark, start_date, end_date, max_points=200):
     # 拼接到 eq 里(按 date 对齐)
     bench_aligned = bench_sub[["date", "equity"]].rename(columns={"equity": "benchmark"})
     merged = eq[["date", "equity"]].merge(bench_aligned, on="date", how="outer").sort_values("date")
-    merged = merged.fillna(method="ffill").dropna()
+    merged = merged.ffill().dropna()
 
     # 取最近 N 个点画图(防止太长)
     if len(merged) > max_points:
