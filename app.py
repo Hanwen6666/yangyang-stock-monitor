@@ -299,7 +299,6 @@ def render_header(df: pd.DataFrame, refresh_state: dict | None = None):
           f'-webkit-text-fill-color:transparent;color:transparent;">羊羊</span>'
           f'<span style="color:{TEXT};">股市监测</span>'
           '</span>'
-          '<span style="color:{TEXT_DIM};font-size:12px;font-weight:400;margin-top:1px;">A股ETF·趋势分析</span>'
         '</div>'
       '</div>'
       '<div style="position:relative;margin-left:auto;display:flex;align-items:center;gap:6px;'
