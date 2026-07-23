@@ -641,9 +641,24 @@ def _pick_asof_from_cache(kline_cache):
 def _persist_results_and_history(metrics_df, hist_rows, hist_dates, asof, cache_key=None):
     """2026-07-21 γ' 靶点: 落盘 results.csv + etf_trend_history.csv + .asof
 
+    2026-07-23 死锁修复: 若传入的 asof 滞后于 today (腾讯源 K 线延迟
+    导致 _pick_asof_from_cache 取到昨天日期),强制用 today 写 .asof
+    并同步更新 metrics 里的 asof_date,避免 cron 因 .asof==today-1 误判
+    为「已最新」而不再触发网络拉取形成死锁 (07-23 silent failure 真根因)
+
     Returns:
         (n_rows, ok) — n_rows 是 results.csv 行数
     """
+    _today = datetime.now().strftime("%Y%m%d")
+    _asof_was_stale = bool(asof) and asof < _today
+    if _asof_was_stale:
+        # 同步修正 metrics 里的 asof_date (保证 results.csv 列与 .asof 一致)
+        if "asof_date" in metrics_df.columns:
+            metrics_df = metrics_df.copy()
+            metrics_df["asof_date"] = _today
+        asof = _today
+        print(f"[refresh_data] _persist 强制写 today={_today} (asof 滞后)", file=sys.stderr)
+
     rows, cols = _build_results_csv_from_metrics(metrics_df, asof)
     write_csv(DATA_DIR / "results.csv", rows, cols)
 
