@@ -9,6 +9,7 @@ ETF 强弱趋势分析 Tab
 """
 import streamlit as st
 import pandas as pd
+import os
 from pathlib import Path
 
 
@@ -991,8 +992,9 @@ def _should_enter_chips_branch(go_btn: bool) -> bool:
 def _render_hot_etf_chips(df_res: pd.DataFrame) -> None:
     """2026-07-21 α 靶点: 渲染热门 ETF chip (top 6 按成交额)
 
-    使用 on_click callback (而非 post-button 检查) 保证 streamlit 1.40+
-    selectbox widget 同步性。
+    2026-07-23 B 方案修复: streamlit 1.59.1 下普通 st.button + on_click callback
+    设 session_state 后 rerun 不稳定; 改用 st.form + form_submit_button + on_click,
+    form_submit 触发 streamlit widget state update 路径, 走完整 rerun 链.
     """
     st.markdown(
         f'<div style="color:{TEXT_DIM};font-size:13px;text-align:center;padding:30px 0 8px;">'
@@ -1003,35 +1005,30 @@ def _render_hot_etf_chips(df_res: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
     _top = df_res.sort_values("latest_amount", ascending=False).head(6)
-    _cols = st.columns(6, gap="small")
 
-    def _make_chip_handler(_full_label, _code):
-        def _handler():
-            # Callback runs in guaranteed pre-rerun context (streamlit 1.40+).
-            st.session_state.stock_detail_selected = _full_label
-            st.session_state.stock_detail_analysed = True
-            st.session_state.stock_detail_analysed_code = _code
-            st.session_state["stock_detail_search"] = _full_label
-        return _handler
+    def _on_submit(_code, _full_label):
+        # form_submit_button on_click: streamlit 立即调用后 rerun 整个脚本
+        st.session_state.stock_detail_selected = _full_label
+        st.session_state.stock_detail_analysed = True
+        st.session_state.stock_detail_analysed_code = _code
 
-    for i, (_, r) in enumerate(_top.iterrows()):
-        with _cols[i]:
-            _code = str(r["code"]).zfill(6)
-            _name = str(r.get("name", ""))[:6]
-            _full_label = f"{_code} {r.get('name','')}"
-            st.button(
+    for _, r in _top.iterrows():
+        _code = str(r["code"]).zfill(6)
+        _name = str(r.get("name", ""))[:6]
+        _full_label = f"{_code} {r.get('name','')}"
+        with st.form(key=f"hot_chip_form_{_code}", clear_on_submit=True):
+            st.form_submit_button(
                 f"🔥 {_code}",
-                key=f"hot_chip_{_code}",
                 help=f"{_name} · 点击直接加载 K 线",
                 use_container_width=True,
-                on_click=_make_chip_handler(_full_label, _code),
+                on_click=_on_submit, args=(_code, _full_label),
             )
+
     _sub_html = '<div style="display:flex;gap:6px;margin-top:4px;">'
     for i in range(len(_top)):
         _sub_html += f'<div style="flex:1;text-align:center;color:{TEXT_DIM};font-size:9px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px;">{str(_top.iloc[i].get("name",""))[:5]}</div>'
     _sub_html += '</div>'
     st.markdown(_sub_html, unsafe_allow_html=True)
-
 
 def _should_skip_analysis_gate(selected, go_btn: bool) -> bool:
     """2026-07-21 α 靶点: chip 点击后免敲门判断 (selected 有值但 go_btn=False)"""
@@ -1091,46 +1088,25 @@ def _prepare_stock_kline(code: str, etf_name: str) -> dict | None:
 def _render_stock_kline_chart(code: str, kw_show_chart: pd.DataFrame) -> None:
     """2026-07-21 α 靶点: 渲染 K 线图 (主图+成交量副图, CDN lightweight-charts)
 
-    2026-07-22 P0 修复三次试错:
-      - v1: st.components.v1.html(html, h=620) → streamlit 1.40+ iframe h=0 (deprecation)
-      - v2: st.iframe(html, h=620) → 拒绝裸 HTML 字符串(只接 URL/Path)
-      - v3: st.html(html, unsafe_allow_javascript=True) → DOMPurify 删除 <script> 块
-      - v4 (本次): 回退到 st.components.v1.html + st.markdown CSS override
-                    强制 iframe 高度为 CHART_KLINE_HEIGHT
-    方案理由:
-      - st.components.v1.html 1.40+ deprecation 但仍可用(仅 warning)
-      - 副作用是 iframe 被 streamlit 设了 h=0 (CSS hack)
-      - streamlit 1.40+ 对 components.v1.html 有特殊处理:
-        iframe 的 height 是通过 LayoutConfig 传递,但 stHtml 1.40+
-        CSS 选择器不准(static v1 组件需要额外 !important CSS)
-      - 修复方法: render 前 inject 一段 markdown CSS 强制
-        `iframe[title*="streamlit.components"]` 高于 CHART_KLINE_HEIGHT
-      - streamlit 1.40+ 仍把 components.v1.html 转发到 st.iframe,
-        但 iframe title 是 'st.iframe' (不是 'streamlit.components'),
-        所以改为选择所有 K线图父级的 [data-testid="stElementContainer"]
-        然后给 iframe 加 style。
+    2026-07-23 B 方案修复 streamlit 1.59.1 深度降级:
+      - v4: st.components.v1.html + CSS hack → streamlit 1.59 DOMPurify 把该 CSS rule 删掉
+      - v5 (本次): 写 static/charts/<code>.html → st.iframe(src='/app/static/charts/<code>.html', height=CHART_KLINE_HEIGHT)
+        依赖 .streamlit/config.toml 里 `server.enableStaticServing = true`
+        (streamlit 1.36+ 原生支持, 把 <WorkingDirectory>/static/ 暴露到 /app/static/
+         ——注意 1.36+ 的 url 前缀是 /app/static/ 而不是 /static/)
+        验证通过 (2026-07-23): src 真的被加载、iframe 高度被尊重、canvas 真渲染
     """
     chart_html = _kline_chart_html(
         kw_show_chart,
         amount_series=kw_show_chart["amount"] if "amount" in kw_show_chart.columns else None,
     )
-    # 1. 渲染 K 线图 — components.v1.html streamlit 1.40+ 仍支持
-    st.components.v1.html(chart_html, height=CHART_KLINE_HEIGHT)
-    # 2. CSS 强制 streamlit 给 iframe 设的 h=0 被覆盖
-    st.markdown(
-        f'''<style>
-/* streamlit 1.40+ 把 st.components.v1.html 转发为 st.iframe, iframe 被设了 h=0 */
-/* 强制把该区域所有 iframe 都设上正确高度 */
-[data-testid="stElementContainer"] iframe[title*="iframe"],
-[data-testid="stElementContainer"] iframe[title*="streamlit"] {{
-  height: {CHART_KLINE_HEIGHT}px !important;
-  width: 100% !important;
-  min-height: {CHART_KLINE_HEIGHT}px !important;
-}}
-</style>''',
-        unsafe_allow_html=True,
-    )
-
+    # 1. 写静态文件到 <WorkingDirectory>/static/charts/<code>.html
+    chart_path = os.path.join("static", "charts", f"{code}.html")
+    os.makedirs(os.path.dirname(chart_path), exist_ok=True)
+    with open(chart_path, "w", encoding="utf-8") as _f:
+        _f.write(chart_html)
+    # 2. 用 st.iframe 引用静态文件 (streamlit 1.36+ 原生支持本地静态 + iframe 真渲染)
+    st.iframe(f"/app/static/charts/{code}.html", height=CHART_KLINE_HEIGHT)
 
 def _enrich_chart_with_latest_amount(code: str, kw_show_chart: pd.DataFrame) -> pd.DataFrame:
     """2026-07-21 α 靶点: 将今日成交额插到 K 线最后一根 (避免估算出错)"""

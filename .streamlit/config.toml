@@ -4,6 +4,10 @@
 [server]
 # 允许所有 origin 访问 (IP 直连需要)
 enableCORS = false
+# 2026-07-23 B 方案: 启用静态文件服务 (streamlit 1.36+ 原生支持,
+# 把 <WorkingDirectory>/static/ 暴露到 URL 前缀 /app/static/)
+# 用于 K 线图 static/charts/<code>.html + st.iframe(src=...) 引用
+enableStaticServing = true
 enableXsrfProtection = false
 # WebSocket 跨域允许
 headless = true

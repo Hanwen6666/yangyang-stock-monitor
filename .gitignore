@@ -38,6 +38,9 @@ log/
 *.corrupt.*
 # 7-17 事故快照目录 (不进 git, 改用 git 回滚)
 .bak-20260717/
+# 7-23 K线 B 方案回滚网 (B 方案 etf_strength.py + config.toml 备份, 不进 git)
+.bak-20260723-chip-form/
+.bak-20260723-kline-static/
 
 # IDE / 编辑器
 .vscode/
@@ -58,3 +61,9 @@ log/
 
 # OpenClaw workspace 状态文件 (不属于项目本身)
 openclaw-workspace-state.json
+
+# streamlit 1.36+ static serving 运行时生成的 K 线 chart HTML (B 方案)
+# (运行时生成, 不进 git)
+static/charts/*.html
+# 保留 static/charts/.gitkeep 占位
+!static/charts/.gitkeep
