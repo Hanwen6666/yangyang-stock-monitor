@@ -274,12 +274,66 @@ def get_a_stock_pool() -> pd.DataFrame:
 # ============================================================
 # 大盘(创业板指)K 线 + 状态判定
 # ============================================================
+def _ensure_benchmark_index_fresh():
+    """P5A (2026-07-24): 增量从腾讯源拉最新 399006 K 线, append 到 index_399006.json
+
+    历史根因: fetch_benchmark_kline 旧逻辑中本地 JSON 文件存在时从不走网络,
+    且没有任何 cron/auto_refresh 脚本增量更新该 JSON — 导致大盘 K 线
+    永久停留在最后 init 时的日期 (2026-07-17) 整周.
+
+    本函数仅增量 (append), 绝不重写既有历史数据:
+      - 本地 JSON 最后日期 = today / future: 不动, return
+      - 否则从腾讯源拉 (n=250, ~1年) 足够覆盖任意 gap;
+        覆盖本地对应日期, 写入临时文件 + 原子 rename.
+
+    失败容错: 任何异常吞掉 (仅 stderr 一行 warn), 不阻塞 fetcher 原 fallback.
+    """
+    import sys as _sys
+    if not INDEX_399006_PATH.exists():
+        return
+    try:
+        with INDEX_399006_PATH.open() as f:
+            raw = json.load(f)
+        if not raw:
+            return
+        local_last = max(raw.keys())
+        from datetime import date as _date
+        today_str = _date.today().isoformat()
+        if local_last >= today_str:
+            return
+        df_new = _tencent_kline_one("399006", n=250)
+        if df_new is None or len(df_new) == 0:
+            return
+        df_new["date"] = df_new["date"].astype(str)
+        df_new_today = df_new[df_new["date"] >= local_last].drop_duplicates(subset="date", keep="last")
+        for _, row in df_new_today.iterrows():
+            raw[row["date"]] = {
+                "open": float(row.get("open", 0) or 0),
+                "close": float(row.get("close", 0) or 0),
+                "high": float(row.get("high", 0) or 0),
+                "low": float(row.get("low", 0) or 0),
+                "volume": float(row.get("volume", 0) or 0),
+            }
+        tmp = INDEX_399006_PATH.with_suffix(".json.tmp")
+        with tmp.open("w") as f:
+            json.dump(raw, f, ensure_ascii=False, sort_keys=True)
+        tmp.replace(INDEX_399006_PATH)
+        print(f"[fetch_benchmark] JSON 增量 update: {local_last} → {today_str} (+{len(df_new_today)} bars)", file=_sys.stderr)
+    except Exception as e:
+        print(f"[fetch_benchmark] 增量 update 失败, 走原 fallback: {e}", file=_sys.stderr)
+
+
 def fetch_benchmark_kline(n: int = 800) -> pd.DataFrame | None:
     """拉创业板指 399006 K 线
 
     优先从本地 index_399006.json 读 (2010 起),退化到腾讯源。
     返回 DataFrame: date, open, close, high, low, volume
+
+    P5A (2026-07-24): 调用前先 _ensure_benchmark_index_fresh() 自动增量 update
+    本地 JSON — 根除 "本地 JSON 卡在 init 日期" 的 silent failure.
     """
+    _ensure_benchmark_index_fresh()
+
     if INDEX_399006_PATH.exists():
         try:
             with INDEX_399006_PATH.open() as f:
