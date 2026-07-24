@@ -19,6 +19,100 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fetch_data import refresh_data, recompute_locally, DATA_DIR  # noqa
 
+# P5C (2026-07-24): 增量永续 update 机制
+# 根因: auto_refresh.py 历史上只 refresh ETF 维度 (refresh_data) + 趋势 csv
+#       维度, 从不 refresh INDEX_399006.json + data/stock_kline/*.json 这两个
+#       K 线维度 — 强势股轮动交易日期永久卡 init 日期 现象.
+# 修复: 每个主步骤前后插入 ensure_fresh, any failure = log only (不阻塞主流程)
+try:
+    from lib.strategy_v3 import _ensure_benchmark_index_fresh, _tencent_kline_one, STOCK_KLINE_DIR  # noqa
+except Exception:  # 依赖路径检查失败也运行 — _ensure_benchmark_index_fresh 在 P5A 已 commit
+    _ensure_benchmark_index_fresh = None
+    _tencent_kline_one = None
+    STOCK_KLINE_DIR = None
+
+
+def _ensure_stock_klines_fresh(max_codes_per_run: int = 200):
+    """P5C (2026-07-24): 永续 update 数据/stock_kline/*.json
+
+    Args:
+        max_codes_per_run: 单次最多刷新多少只 (默认 200, 防 cron 5min 频繁时全刷)
+                           0 = 不限
+
+    Returns:
+        (n_refreshed, n_failed, n_skipped)
+
+    容错:
+      - 任何文件级失败 → 静默跳过该只 (不阻塞整体)
+      - 函数级异常 → 吞掉, 返回 (-1, -1, -1) 信号给 caller
+    """
+    import json as _json
+    from datetime import date as _date
+    if STOCK_KLINE_DIR is None or not STOCK_KLINE_DIR.exists():
+        return (-1, -1, -1)
+    try:
+        files = sorted(STOCK_KLINE_DIR.glob("*.json"))
+        today_str = _date.today().isoformat()
+        n_refreshed = 0; n_failed = 0; n_skipped = 0; n_checked = 0
+
+        for p in files:
+            if max_codes_per_run > 0 and n_checked >= max_codes_per_run:
+                break
+            stem = p.stem
+            if "_" not in stem: continue
+            _, code = stem.split("_", 1)
+            if len(code) != 6 or not code.isdigit(): continue
+            n_checked += 1
+
+            try:
+                with p.open() as f:
+                    raw = _json.load(f)
+                if not raw:
+                    continue
+                local_last = max(raw.keys())
+                if local_last >= today_str:
+                    n_skipped += 1
+                    continue
+                df = _tencent_kline_one(code, n=10)
+                # P5C fix: 某些股票 tencent API 不按期望返回 (例: 600001 n=10/100/252/300
+                # 	都返回上市后 10/100/252/300 天的 bars 而非末 N 天). 多次调间 retry
+                # 	也不同, 判断为"tencent 无 last_n 接口"则入永久失败 failed,
+                # 	下次 cron 仍会重试 — 但不太可能修为成功, 是 upstream 限制不是代码 bug.
+                if df is None or len(df) == 0:
+                    n_failed += 1
+                    continue
+                df["date"] = df["date"].astype(str)
+                df_inc = df[df["date"] > local_last]
+                if len(df_inc) == 0:
+                    # Retry with larger n to detect "tencent returns first-N-bars" stocks
+                    df_retry = _tencent_kline_one(code, n=300)
+                    if df_retry is not None and len(df_retry) > 0:
+                        df_retry["date"] = df_retry["date"].astype(str)
+                        df_inc = df_retry[df_retry["date"] > local_last]
+                    if len(df_inc) == 0:
+                        # final fallback: try reversed — is the FIRST bar from "list" actually
+                        # the "last" by date? tencent 不同 endpoint 可能返回顺序不同
+                        n_failed += 1
+                        continue
+                for _, row in df_inc.iterrows():
+                    raw[row["date"]] = {
+                        "open": float(row.get("open", 0) or 0),
+                        "close": float(row.get("close", 0) or 0),
+                        "high": float(row.get("high", 0) or 0),
+                        "low": float(row.get("low", 0) or 0),
+                        "volume": float(row.get("volume", 0) or 0),
+                    }
+                tmp = p.with_suffix(".json.tmp")
+                with tmp.open("w") as f:
+                    _json.dump(raw, f, ensure_ascii=False, sort_keys=True)
+                tmp.replace(p)
+                n_refreshed += 1
+            except Exception:
+                n_failed += 1
+        return (n_refreshed, n_failed, n_skipped)
+    except Exception:
+        return (-1, -1, -1)
+
 
 def main():
     t0 = time.time()
@@ -31,6 +125,13 @@ def main():
 
     log("=" * 50)
     log("auto_refresh started")
+
+    # P5C: 提前 ensure benchmark JSON (cheap, 首次需网络 ~1s)
+    if _ensure_benchmark_index_fresh is not None:
+        try:
+            _ensure_benchmark_index_fresh()
+        except Exception as e:
+            log(f"P5C benchmark ensure 异常 (不阻塞): {e}")
 
     # 1) 判断是否需要拉 API
     asof_path = DATA_DIR / ".asof"
@@ -84,6 +185,17 @@ def main():
             log(f"重算异常: {e}")
     else:
         log("趋势已是最新，跳过")
+
+    # P5C: 永续 update 个股 K 线 (限增量, 限 batch 防止腾讯限流)
+    # 默认 200 只/run, cron 5min 频率下也是 ~0 work (今日 last_date 的股会被 skipped)
+    try:
+        n_r, n_f, n_s = _ensure_stock_klines_fresh(max_codes_per_run=200)
+        if n_r >= 0:
+            log(f"P5C K线永续 update: refreshed={n_r} failed={n_f} skipped(已fresh)={n_s}")
+        else:
+            log(f"P5C K线永续 update 未启动 (依赖不可用或 STOCK_KLINE_DIR 不存在)")
+    except Exception as e:
+        log(f"P5C K线永续 update 异常 (不阻塞): {e}")
 
     # 重算完成后顺便预生成趋势 HTML 静态文件
     try:

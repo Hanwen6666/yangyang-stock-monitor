@@ -96,10 +96,17 @@ def main():
                 continue
             df["date"] = df["date"].astype(str)
             df_incremental = df[df["date"] > local_last]
+            # P5C fix: 有些股票 tencent n=10 返回上市后 10 天 (2009-12) 而非末 10 天 (2026-07),
+            # 	此时 df_incremental=空 -> 跳过 — 但股从未增量. 用 n=300 重试覆盖.
             if len(df_incremental) == 0:
-                n_failed += 1
-                failed_codes.append(code)
-                continue
+                df_retry = _tencent_kline_one(code, n=300)
+                if df_retry is not None and len(df_retry) > 0:
+                    df_retry["date"] = df_retry["date"].astype(str)
+                    df_incremental = df_retry[df_retry["date"] > local_last]
+                if len(df_incremental) == 0:
+                    n_failed += 1
+                    failed_codes.append(code)
+                    continue
 
             for _, row in df_incremental.iterrows():
                 raw[row["date"]] = {
