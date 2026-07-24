@@ -78,6 +78,17 @@ st.markdown(f"""
 
   .block-container {{ padding-top: 2rem; padding-bottom: 2rem; }}
 
+  /* P4 (2026-07-24): 大盘总览居中 wrapper — 屏宽 ≥1700px 才生效, 避免窄屏挤压 */
+  .yy-centered {{
+    max-width: 1500px;
+    margin-left: auto;
+    margin-right: auto;
+  }}
+  @media (max-width: 1699.98px) {{
+    /* 窄屏: 不居中, 跟随 .block-container 全宽 */
+    .yy-centered {{ max-width: none; margin: 0; }}
+  }}
+
   /* Tabs */
   .stTabs [data-baseweb="tab-list"] {{
     gap: 4px;

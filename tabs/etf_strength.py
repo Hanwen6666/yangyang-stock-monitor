@@ -1289,7 +1289,15 @@ def _subview_radio(view_keys, view_labels, state_key, default_idx=0):
 
 
 def render_overview(df_res: pd.DataFrame, df_hist: pd.DataFrame):
-    """顶层 Tab 【📊 大盘总览】: KPI + 6 档分类子视图(股票详情 / 趋势演变 / 6档列表)"""
+    """顶层 Tab 【📊 大盘总览】: KPI + 6 档分类子视图(股票详情 / 趋势演变 / 6档列表)
+
+    P4 (2026-07-24): 大屏 (>=1700px) 时主体内容居中到 1500px
+    — 与 K 线图/强势股轮动/趋势演变 Tab 保持全宽不同,
+      大盘总览视觉占比最重 (KPI + 异动 + 6 档列表), 居中视觉锚最稳。
+    窄屏 / 平板自动跟随 .block-container 全宽 (CSS @media 保护)。
+    """
+    # P4: 大屏居中 wrapper (仅大盘总览, 不动其他 3 Tab)
+    st.markdown('<div class="yy-centered">', unsafe_allow_html=True)
     render_kpi(df_res, df_hist)
     # 🚨 板块异动横幅 + 下载按钮 工具行
     _render_anomaly_banner(df_res, df_hist)
@@ -1308,7 +1316,9 @@ def render_overview(df_res: pd.DataFrame, df_hist: pd.DataFrame):
 
     sel = _subview_radio(view_keys, view_labels, state_key="_overview_view", default_idx=0)
     render_list_view(df_res, label_filter=sel)
+    st.markdown('</div>', unsafe_allow_html=True)
 
+    # back-to-top 按钮: fixed 定位, 不受 yy-centered 影响, 留在 wrapper 外
     st.markdown(f"""
     <button class="back-to-top" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="回到顶部">↑</button>
     """, unsafe_allow_html=True)
