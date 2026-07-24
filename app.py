@@ -15,6 +15,7 @@ import pandas as pd
 from pathlib import Path
 import sys
 import datetime
+from datetime import date  # P5D
 import time
 
 # 把当前目录加进 path,这样 tabs/ 能 import
@@ -529,12 +530,80 @@ def _handle_refresh_button(df_res, df_hist):
     return df_res, df_hist
 
 
+def _invalidate_stale_caches_if_needed():
+    """P5D (2026-07-24): 磁盘 mtime 与内存 cache 同步
+
+    根因:
+      - streamlit @st.cache_data 装饰器仅靠 TTL (最长 1h) 失效,
+        在 TTL 期间内磁盘数据可能已修改 (auto_refresh.py cron, 
+        fetch_incremental.py, 手戳刷新 etc.), 但内存缓存仍陈旧.
+      - 强势股轮动场景: 14:05 cron auto_refresh 只刷了 ETF 维度,
+        但 _load_data() 的内存 cache 仍持 00:22 写的 pkl — 用户访问
+        看到 asof=07-17 不是 07-24.
+
+    修复:
+      - 以磁盘 mtime 作为 cache invalidation 触发器
+      - 计算 fingerprint = (results.csv mtime, etf_trend_history.csv mtime,
+        market_{today}.pkl mtime)
+      - fingerprint 与 st.session_state["_cache_mtime_fp"] 不同 -> clear 缓存
+
+    6 维 cache:
+      load_results / load_history (load args 一样时 TTL 期间不变)
+      实际: 数据 mtime 改了 -> 下一轮调用自然会重新读 -> cache miss -> 新值入 cache
+      关键点是 _load_data() 无 args,纯靠 TTL, **必须手动 clear**
+
+    容错: 任何文件不存在 / IO 出错 -> 静默 return, 不干扰主流程.
+    """
+    import streamlit as _st_mod
+    try:
+        fp_parts = []
+        for p in [
+            DATA_DIR / "results.csv",
+            DATA_DIR / "etf_trend_history.csv",
+            Path("/opt/yangyang-stock-monitor/data/.a_kline_cache") / f"market_{date.today().strftime('%Y%m%d')}.pkl",
+        ]:
+            try:
+                fp_parts.append((str(p), p.stat().st_mtime if p.exists() else 0))
+            except Exception:
+                fp_parts.append((str(p), 0))
+        new_fp = tuple(fp_parts)
+
+        prev_fp = _st_mod.session_state.get("_cache_mtime_fp")
+        if prev_fp == new_fp:
+            return  # 磁盘未变, 缓存仍然 fresh
+
+        # 磁盘变了 -> 失效 _load_data() (load_results/load_history 下面调用自然重新读)
+        try:
+            from tabs.strength_rotation import _load_data as _sr_load_data
+            _sr_load_data.clear()
+        except Exception:
+            pass
+
+        # 同样清除 etf_strength.py 的 4 个 cache (即使有 args,保险)
+        try:
+            from tabs import etf_strength as _es
+            for fn_name in ["_cached_fetch_kline", "_cached_fetch_amount", "_prepare_list_view", "_build_history_html"]:
+                fn = getattr(_es, fn_name, None)
+                if fn is not None and hasattr(fn, "clear"):
+                    try:
+                        fn.clear()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        _st_mod.session_state["_cache_mtime_fp"] = new_fp
+    except Exception:
+        pass  # 任何异常: 静默, 不阻塞主流程
+
+
 def main():
     """主入口调度器 (2026-07-21 η 靶点: 176L → 30L)
 
     六步调度: init → load → banner → header → refresh → status → tabs → footer
     """
     _init_session_state()
+    _invalidate_stale_caches_if_needed()  # P5D
     df_res, df_hist, is_empty = _load_data_with_seed_fallback()
     _render_cloudbase_status_banner()
     _render_empty_state_banner(df_res, is_empty)

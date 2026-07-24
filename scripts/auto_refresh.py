@@ -197,6 +197,17 @@ def main():
     except Exception as e:
         log(f"P5C K线永续 update 异常 (不阻塞): {e}")
 
+    # P5D: 重写 pkl cache, 以 _load_data() 首次调用后 mount 进 streamlit cache 时仍是 fresh.
+    # 路径: fetch_market_klines(force=True) 会从 stock_kline/ JSON + index_399006.json 重建,
+    # 	并 pickle.dump 覆盖 market_{today}.pkl — 后续 streamlit @st.cache_data(ttl=3600) 命中后
+    # 	也会拿 fresh data. cron 5 min 跑一次, 耗时 ~30s = 可接受.
+    try:
+        from lib.strategy_v3 import fetch_market_klines as _fp_mk
+        klines_out, bench_out = _fp_mk(force=True)
+        log(f"P5D pkl cache 重建: n_stocks={len(klines_out)}, bench_last={bench_out['date'].iloc[-1]}")
+    except Exception as e:
+        log(f"P5D pkl cache 重建异常 (不阻塞): {e}")
+
     # 重算完成后顺便预生成趋势 HTML 静态文件
     try:
         from scripts import precompute_history
