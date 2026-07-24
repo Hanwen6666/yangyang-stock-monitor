@@ -139,20 +139,21 @@ st.markdown(f"""
 
   /* Step3: 表格行 hover 详情 — 渐变背景 + 左侧色条 + 名称后追加「查看详情」 */
   .etf-table tr {{ transition: all 0.18s cubic-bezier(0.4,0,0.2,1) !important; }}
-  .etf-table tr:hover td {{
-    background: linear-gradient(90deg, rgba(91,147,224,0.10), rgba(91,147,224,0.04)) !important;
+  /* P1: hover「查看详情」限定到个股详情表 — etf-table-wrap.etf-table-detail */
+  .etf-table-wrap.etf-table-detail .etf-table tr:hover td {{
+    background: linear-gradient(90deg, rgba(122,162,247,0.10), rgba(122,162,247,0.04)) !important;
     color: #fff !important;
   }}
-  .etf-table tr:hover td:first-child {{
-    box-shadow: inset 3px 0 0 #5b93e0 !important;
-    background: linear-gradient(90deg, rgba(91,147,224,0.18), rgba(91,147,224,0.10)) !important;
-    color: #5b93e0 !important;
+  .etf-table-wrap.etf-table-detail .etf-table tr:hover td:first-child {{
+    box-shadow: inset 3px 0 0 #7aa2f7 !important;
+    background: linear-gradient(90deg, rgba(122,162,247,0.18), rgba(122,162,247,0.10)) !important;
+    color: #7aa2f7 !important;
     font-weight: 700;
   }}
-  .etf-table tr:hover td:nth-child(4) {{ filter: brightness(1.3); }}
-  .etf-table tr:hover td:nth-child(2)::after {{
+  .etf-table-wrap.etf-table-detail .etf-table tr:hover td:nth-child(4) {{ filter: brightness(1.3); }}
+  .etf-table-wrap.etf-table-detail .etf-table tr:hover td:nth-child(2)::after {{
     content: ' › 查看详情';
-    color: #5b93e0;
+    color: #7aa2f7;
     font-size: 10px;
     font-weight: 600;
     margin-left: 6px;
@@ -593,32 +594,56 @@ def _render_status_strip(df_res, df_hist):
     ss = remaining_sec % 60
     countdown_str = f"{hh:02d}:{mm:02d}:{ss:02d}"
 
+    # P3 chip 化: 4 段独立 mini-chip (背景色块 + icon + label + value)
+    # 设计原则: 与 kpi_band_item_html (lib/ui_components.py) 样式保持一致
+    # - 保留容器 height:34px 不变, 保持整体高度
+    # - 每个 chip 独立 bg/border, 间距由 gap 统一控制
+    _chip_base = (
+        f'display:inline-flex;align-items:center;gap:6px;height:24px;'
+        f'padding:0 9px;background:{BG_PANEL_HI};'
+        f'border:1px solid {BORDER};border-radius:5px;'
+        f'white-space:nowrap;'
+    )
+    _label_base = (
+        f'color:{TEXT_DIM};font-size:9px;text-transform:uppercase;'
+        f'letter-spacing:0.5px;font-weight:600;'
+    )
+    _value_base = (
+        f'font-family:monospace;font-weight:700;font-size:11px;'
+    )
+    _cnt_color = ACCENT_UP
+    _ok_color = ACCENT_UP if n_zero == 0 else "#f59e0b"
+
     countdown_ph = st.empty()
     countdown_ph.markdown(
-        f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;'
-        f'margin:4px 0 10px;padding:6px 12px;height:34px;'
-        f'background:{BG_PANEL};border:1px solid {BORDER};border-radius:6px;'
-        f'font-size:11px;color:{TEXT_MUTED};">'
-        f'<span style="display:inline-flex;align-items:center;gap:4px;">'
-        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;letter-spacing:0.5px;">⏱ 下次刷新</span>'
-        f'<span id="_cnt" style="color:{ACCENT_UP};font-family:monospace;font-weight:700;'
-        f'font-size:11px;background:{ACCENT_UP}14;padding:0 6px;border-radius:3px;">{countdown_str}</span>'
+        f'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;'
+        f'margin:4px 0 10px;padding:5px 10px;height:34px;'
+        f'background:{BG_PANEL};border:1px solid {BORDER};border-radius:6px;">'
+        # Chip 1: 缓存时效 (倒计时)
+        f'<span style="{_chip_base}">'
+        f'<span style="font-size:10px;line-height:1;">🔁</span>'
+        f'<span style="{_label_base}">缓存时效</span>'
+        f'<span id="_cnt" style="{_value_base}color:{_cnt_color};'
+        f'background:{_cnt_color}14;padding:0 6px;border-radius:3px;">{countdown_str}</span>'
         f'</span>'
-        f'<span style="color:{BORDER_HI};">|</span>'
-        f'<span style="display:inline-flex;align-items:center;gap:4px;">'
-        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;letter-spacing:0.5px;">📅 趋势</span>'
-        f'<span style="color:{TEXT};font-family:monospace;font-weight:600;font-size:11px;">{last_date}</span>'
+        # Chip 2: 趋势末
+        f'<span style="{_chip_base}">'
+        f'<span style="font-size:10px;line-height:1;">📅</span>'
+        f'<span style="{_label_base}">趋势末</span>'
+        f'<span style="{_value_base}color:{TEXT};">{last_date}</span>'
         f'</span>'
-        f'<span style="color:{BORDER_HI};">|</span>'
-        f'<span style="display:inline-flex;align-items:center;gap:4px;">'
-        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;letter-spacing:0.5px;">🔄 刷新</span>'
-        f'<span style="color:{TEXT};font-family:monospace;font-weight:600;font-size:11px;">{fetched_at}</span>'
+        # Chip 3: 拉取
+        f'<span style="{_chip_base}">'
+        f'<span style="font-size:10px;line-height:1;">🕓</span>'
+        f'<span style="{_label_base}">拉取</span>'
+        f'<span style="{_value_base}color:{TEXT};">{fetched_at}</span>'
         f'</span>'
-        f'<span style="color:{BORDER_HI};">|</span>'
-        f'<span style="display:inline-flex;align-items:center;gap:4px;">'
-        f'<span style="color:{TEXT_DIM};font-size:9px;text-transform:uppercase;letter-spacing:0.5px;">✓ 完整度</span>'
-        f'<span style="color:{ACCENT_UP if n_zero == 0 else "#f59e0b"};font-family:monospace;font-weight:700;font-size:11px;'
-        f'background:{(ACCENT_UP if n_zero == 0 else "#f59e0b")}14;padding:0 6px;border-radius:3px;">'
+        # Chip 4: 数据完整
+        f'<span style="{_chip_base}">'
+        f'<span style="font-size:10px;line-height:1;">✓</span>'
+        f'<span style="{_label_base}">数据完整</span>'
+        f'<span style="{_value_base}color:{_ok_color};'
+        f'background:{_ok_color}14;padding:0 6px;border-radius:3px;">'
         f'{n_total - n_zero}/{n_total}</span>'
         f'</span>'
         f'</div>',

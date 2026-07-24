@@ -176,7 +176,7 @@ def _render_etf_table_html(show: pd.DataFrame, uid: int) -> None:
         unsafe_allow_html=True,
     )
     st.markdown(
-        f'<div class="etf-table-wrap" data-uid="{uid}">'
+        f'<div class="etf-table-wrap etf-table-detail" data-uid="{uid}">'
         f'{show.to_html(escape=False, index=False, border=0, classes="etf-table")}'
         f'</div>',
         unsafe_allow_html=True,
@@ -313,22 +313,23 @@ def _build_etf_table_css() -> str:
         transition: all 0.18s cubic-bezier(0.4,0,0.2,1) !important;
         position: relative;
       }}
-      .etf-table tr:hover td {{
-        background: linear-gradient(90deg, rgba(91,147,224,0.10), rgba(91,147,224,0.04)) !important;
+      /* P1: hover 限定到 etf-table-detail — 个股详情表才显示查看详情 */
+      .etf-table-wrap.etf-table-detail .etf-table tr:hover td {{
+        background: linear-gradient(90deg, rgba(122,162,247,0.10), rgba(122,162,247,0.04)) !important;
         color: #fff !important;
       }}
-      .etf-table tr:hover td:first-child {{
-        box-shadow: inset 3px 0 0 #5b93e0 !important;
-        background: linear-gradient(90deg, rgba(91,147,224,0.18), rgba(91,147,224,0.10)) !important;
-        color: #5b93e0 !important;
+      .etf-table-wrap.etf-table-detail .etf-table tr:hover td:first-child {{
+        box-shadow: inset 3px 0 0 #7aa2f7 !important;
+        background: linear-gradient(90deg, rgba(122,162,247,0.18), rgba(122,162,247,0.10)) !important;
+        color: #7aa2f7 !important;
         font-weight: 700;
       }}
-      .etf-table tr:hover td:nth-child(4) {{
+      .etf-table-wrap.etf-table-detail .etf-table tr:hover td:nth-child(4) {{
         filter: brightness(1.3);
       }}
-      .etf-table tr:hover td:nth-child(2)::after {{
+      .etf-table-wrap.etf-table-detail .etf-table tr:hover td:nth-child(2)::after {{
         content: ' › 查看详情';
-        color: #5b93e0;
+        color: #7aa2f7;
         font-size: 10px;
         font-weight: 600;
         margin-left: 6px;
@@ -702,10 +703,12 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         tag_bg = ls["bg"] if ls else BORDER_HI
         tag_fg = ls["fg"] if ls else TEXT_MUTED
         return (
+            # P2: white-space:nowrap + min-width:96px 防止窄屏 chip 挤碎成单字符
             f'<span style="display:inline-flex;align-items:center;gap:5px;'
             f'background:{accent}1a;color:{accent};'
             f'padding:2px 8px;border-radius:4px;'
             f'font-size:11px;font-weight:700;margin-right:6px;'
+            f'white-space:nowrap;min-width:96px;'
             f'border:1px solid {accent}33;">'
             f'<span style="font-size:11px;line-height:1;">{arrow}</span>'
             f'<span>{sign}{pp:.1f}pp</span>'
@@ -717,14 +720,15 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
 
     # 新设计: 左红右绿 · 中间分隔线 · 顶部标签 / 底部 chip
     # 扫读一眼就知道哪个方向强
+    # P2: 加 flex-wrap:wrap + min-width:min-content 容许窄屏换行不断列
     in_arrow = "▲"
     out_arrow = "▼"
     banner_html = (
         f'<div style="display:flex;align-items:stretch;gap:0;margin-top:8px;'
         f'border:1px solid {BORDER};border-radius:6px;overflow:hidden;'
-        f'background:{BG_PANEL};">'
+        f'background:{BG_PANEL};flex-wrap:wrap;">'
         # 左:资金流入 (红色调)
-        f'<div style="flex:1;padding:10px 14px;'
+        f'<div style="flex:1;min-width:240px;padding:10px 14px;'
         f'background:linear-gradient(90deg,rgba(255,77,79,0.10),rgba(255,77,79,0.02));'
         f'border-right:1px solid {BORDER};">'
         f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
@@ -735,7 +739,7 @@ def _render_anomaly_banner(df_res: pd.DataFrame, df_hist: pd.DataFrame):
         f'{_chip(top_in[0], top_in[1], "in")}'
         f'</div>'
         # 右:相对弱势 (绿色调)
-        f'<div style="flex:1;padding:10px 14px;'
+        f'<div style="flex:1;min-width:240px;padding:10px 14px;'
         f'background:linear-gradient(90deg,rgba(34,197,94,0.02),rgba(34,197,94,0.10));">'
         f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
         f'<span style="color:{ACCENT_DN};font-size:13px;font-weight:700;">{out_arrow} 涨幅垫底</span>'
