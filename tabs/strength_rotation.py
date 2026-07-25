@@ -243,6 +243,15 @@ def render_backtest(df_res, df_hist):
     stats = result.final_stats
     eq = result.equity_curve
     trades = result.trades
+    # 从 result 反推 start_date / end_date (避免 cached result re-run 时 start_date UnboundLocalError)
+    if eq is not None and not eq.empty:
+        _dates_arr = eq["date"].astype(str).values
+        start_date = str(_dates_arr[0])
+        end_date = str(_dates_arr[-1])
+        del _dates_arr
+    else:
+        start_date = "—"
+        end_date = "—"
 
     # === 顶部 KPI ===
     st.markdown(height_spacer(8), unsafe_allow_html=True)
@@ -309,6 +318,36 @@ def render_backtest(df_res, df_hist):
             hide_index=True,
             height=320,
         )
+
+    # === 当前持仓 ===  (P0 Bug B 修复 2026-07-25: BacktestResult.holdings_log)
+    holdings_log = getattr(result, "holdings_log", None)
+    if holdings_log is not None and not holdings_log.empty:
+        latest = holdings_log.iloc[-1]
+        cur_codes = [c.strip() for c in str(latest.get("holdings", "")).split(",") if c.strip()]
+        n_hold = len(cur_codes)
+        cur_date = str(latest.get("date", "—"))
+        if cur_codes:
+            st.markdown(f"""
+            <div style="background:{BG_PANEL};border:1px solid {BORDER};
+                        border-radius:8px;padding:12px 14px;margin-bottom:8px;margin-top:12px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:{TEXT};font-size:14px;font-weight:700;">📊 当前持仓</span>
+                <span style="color:{TEXT_DIM};font-size:11px;">
+                  截止 {cur_date} · 共 {n_hold} 只 ETF · 等权 {1.0/n_hold:.1%} 每只
+                </span>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+            rows = [
+                {"代码": c, "名称": name_map.get(c, c), "权重": f"{1.0/n_hold:.1%}"}
+                for c in cur_codes
+            ]
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                hide_index=True,
+                height=min(40 + n_hold * 35, 400),
+            )
 
 
 def _render_equity_chart(eq, benchmark, start_date, end_date):
