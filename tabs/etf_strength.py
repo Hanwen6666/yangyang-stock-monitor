@@ -1296,29 +1296,34 @@ def render_overview(df_res: pd.DataFrame, df_hist: pd.DataFrame):
       大盘总览视觉占比最重 (KPI + 异动 + 6 档列表), 居中视觉锚最稳。
     窄屏 / 平板自动跟随 .block-container 全宽 (CSS @media 保护)。
     """
-    # P4: 大屏居中 wrapper (仅大盘总览, 不动其他 3 Tab)
-    st.markdown('<div class="yy-centered">', unsafe_allow_html=True)
-    render_kpi(df_res, df_hist)
-    # 🚨 板块异动横幅 + 下载按钮 工具行
-    _render_anomaly_banner(df_res, df_hist)
-    st.markdown(height_spacer(12), unsafe_allow_html=True)
+    # P4 v2 (2026-07-27): 大屏居中 — streamlit 原生 st.columns([1, 8, 1]) 路线
+    # 推翻 8d291fd 的 unsafe_allow_html div 包裹: streamlit widget 不会嵌入
+    # 外部 unsafe_allow_html div,导致 yy-centered 实际只生成空 div
+    # (P 优先级决策范式 - 拍板后推翻重做)
+    # 1920 屏: 左右各 1 份 spacer (~192px) + 中间 8 份 (~1536px ≈ 1500px 居中)
+    # 1700 屏以下: columns 比例 [0, 1, 0] → 等同全宽,保护窄屏
+    _, _center, _ = st.columns([1, 8, 1], gap="small")
+    with _center:
+        render_kpi(df_res, df_hist)
+        # 🚨 板块异动横幅 + 下载按钮 工具行
+        _render_anomaly_banner(df_res, df_hist)
+        st.markdown(height_spacer(12), unsafe_allow_html=True)
 
-    icons = {
-        "超强势":   "🟥",
-        "强势":     "🟧",
-        "震荡上涨": "🟨",
-        "横盘震荡": "⬜",
-        "震荡下跌": "🟦",
-        "一直下跌": "🟫",
-    }
-    view_keys = list(LABEL_ORDER)
-    view_labels = [f"{icons.get(l, '')}{l}" for l in LABEL_ORDER]
+        icons = {
+            "超强势":   "🟥",
+            "强势":     "🟧",
+            "震荡上涨": "🟨",
+            "横盘震荡": "⬜",
+            "震荡下跌": "🟦",
+            "一直下跌": "🟫",
+        }
+        view_keys = list(LABEL_ORDER)
+        view_labels = [f"{icons.get(l, '')}{l}" for l in LABEL_ORDER]
 
-    sel = _subview_radio(view_keys, view_labels, state_key="_overview_view", default_idx=0)
-    render_list_view(df_res, label_filter=sel)
-    st.markdown('</div>', unsafe_allow_html=True)
+        sel = _subview_radio(view_keys, view_labels, state_key="_overview_view", default_idx=0)
+        render_list_view(df_res, label_filter=sel)
 
-    # back-to-top 按钮: fixed 定位, 不受 yy-centered 影响, 留在 wrapper 外
+    # back-to-top 按钮: fixed 定位, 不受 columns 影响, 留在 wrapper 外
     st.markdown(f"""
     <button class="back-to-top" onclick="window.scrollTo({{top:0,behavior:'smooth'}})" title="回到顶部">↑</button>
     """, unsafe_allow_html=True)
